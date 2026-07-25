@@ -6,6 +6,7 @@ from typing import Any
 import modal
 
 from agentkb.modal_backend.generations import (
+    prune_previous_generation,
     read_status,
     resolve_current,
     validate_generation_id,
@@ -127,6 +128,17 @@ class GenerationSearch:
 def status() -> dict[str, Any]:
     volume.reload()
     return read_status(VOLUME_ROOT)
+
+
+@app.function(image=router_image, volumes=volume_mount, timeout=60)
+def prune_previous(generation_id: str, dry_run: bool = False) -> dict[str, Any]:
+    return prune_previous_generation(
+        VOLUME_ROOT,
+        generation_id,
+        dry_run=dry_run,
+        commit=volume.commit,
+        reload=volume.reload,
+    )
 
 
 @app.function(image=router_image, volumes=volume_mount, timeout=900)

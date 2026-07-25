@@ -12,6 +12,7 @@ import {
 } from "../src/refresh";
 import type {
   BuildResult,
+  PrunePreviousResult,
   SearchResult,
   StatusResponse,
   WarmResult,
@@ -64,6 +65,9 @@ class RefreshClient implements AgentKbClient {
     this.buildCalls.push(generationId);
     if (this.failBuild) throw new Error("build failed");
     return buildResult(generationId);
+  }
+  async prunePrevious(): Promise<PrunePreviousResult> {
+    throw new Error("not used");
   }
   close(): void {}
 }

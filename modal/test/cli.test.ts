@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
 
 import type { AgentKbClient } from "../src/client";
-import { runCli } from "../src/cli";
+import {
+  defaultCliDependencies,
+  runCli,
+  runMain,
+} from "../src/cli";
 import type {
   BuildResult,
+  PrunePreviousResult,
   SearchResult,
   StatusResponse,
   WarmResult,
@@ -112,6 +117,22 @@ class FakeClient implements AgentKbClient {
     };
   }
 
+  async prunePrevious(
+    generationId: string,
+    dryRun: boolean,
+  ): Promise<PrunePreviousResult> {
+    this.calls.push(["prunePrevious", generationId, dryRun]);
+    return {
+      schema: 1,
+      dry_run: dryRun,
+      deleted: !dryRun,
+      target_generation_id: generationId,
+      current_generation_id: "g-20260725T130000Z-ddeeff001122",
+      previous_generation_id: generationId,
+      final_previous_generation_id: dryRun ? generationId : null,
+    };
+  }
+
   close(): void {
     this.closed = true;
   }
@@ -144,4 +165,144 @@ test("rejects invalid command input before a remote call", async () => {
   ).rejects.toThrow(/between 1 and 100/);
   expect(client.calls).toEqual([]);
   expect(client.closed).toBeFalse();
+});
+
+test("routes prune dry runs without force and real prunes only with force", async () => {
+  const dryClient = new FakeClient();
+  await runCli(
+    ["prune-previous", "--generation-id", ID, "--dry-run"],
+    () => dryClient,
+    () => {},
+  );
+  expect(dryClient.calls).toEqual([["prunePrevious", ID, true]]);
+
+  const realClient = new FakeClient();
+  await runCli(
+    ["prune-previous", "--force", "--generation-id", ID],
+    () => realClient,
+    () => {},
+  );
+  expect(realClient.calls).toEqual([["prunePrevious", ID, false]]);
+});
+
+test("prune rejects missing force and invalid IDs before a remote call", async () => {
+  for (const args of [
+    ["prune-previous", "--generation-id", ID],
+    ["prune-previous", "--generation-id", "../escape", "--force"],
+  ]) {
+    const client = new FakeClient();
+    expect(runCli(args, () => client, () => {})).rejects.toThrow();
+    expect(client.calls).toEqual([]);
+    expect(client.closed).toBeFalse();
+  }
+});
+
+test("cost routes the exact pinned command and filters to AgentKB", async () => {
+  const calls: string[][] = [];
+  const output: string[] = [];
+  await runCli(
+    ["cost", "--days", "2"],
+    () => new FakeClient(),
+    (line) => output.push(line),
+    {
+      ...defaultCliDependencies,
+      billingSpawn: (command) => {
+        calls.push(command);
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify([
+            {
+              object_id: "ap-1",
+              description: "agentkb",
+              environment: "main",
+              interval_start: "2026-07-25T12:00:00+00:00",
+              resource: "T4",
+              cost: "0.125",
+            },
+            {
+              object_id: "ap-2",
+              description: "other",
+              environment: "main",
+              interval_start: "2026-07-25T12:00:00+00:00",
+              resource: "CPU",
+              cost: "99",
+            },
+          ]),
+        };
+      },
+    },
+  );
+  expect(calls).toEqual([[
+    "uvx",
+    "--from",
+    "modal==1.5.3",
+    "modal",
+    "billing",
+    "report",
+    "--start",
+    "2 days ago",
+    "--resolution",
+    "h",
+    "--show-resources",
+    "--json",
+  ]]);
+  expect(JSON.parse(output[0]!)).toMatchObject({
+    days: 2,
+    app_name: "agentkb",
+    metered_cost: "0.125",
+  });
+});
+
+test("invalid cost input makes no subprocess call", async () => {
+  let spawned = false;
+  expect(
+    runCli(
+      ["cost", "--days", "8"],
+      () => new FakeClient(),
+      () => {},
+      {
+        ...defaultCliDependencies,
+        billingSpawn: () => {
+          spawned = true;
+          throw new Error("should not spawn");
+        },
+      },
+    ),
+  ).rejects.toThrow(/between 1 and 7/);
+  expect(spawned).toBeFalse();
+});
+
+test("help wins anywhere and executable boundary classifies failures", async () => {
+  const output: string[] = [];
+  await runCli(
+    ["prune-previous", "--generation-id", "../escape", "--help"],
+    () => new FakeClient(),
+    (line) => output.push(line),
+  );
+  expect(output.join("")).toContain("agentkb-modal");
+
+  const errors: string[] = [];
+  expect(
+    await runMain({
+      args: ["cost", "--days", "0"],
+      stdout: () => {},
+      stderr: (line) => errors.push(line),
+      clientFactory: () => new FakeClient(),
+      dependencies: defaultCliDependencies,
+    }),
+  ).toBe(2);
+  expect(errors.join("")).toContain("agentkb-modal --help");
+
+  expect(
+    await runMain({
+      args: ["status"],
+      stdout: () => {},
+      stderr: () => {},
+      clientFactory: () => {
+        throw new Error("runtime unavailable");
+      },
+      dependencies: defaultCliDependencies,
+    }),
+  ).toBe(1);
 });

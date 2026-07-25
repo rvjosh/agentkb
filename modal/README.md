@@ -7,7 +7,9 @@ the private Volume is `agentkb-data`; there are no web endpoints.
 
 ## Production commands
 
-Run these commands from the repository root.
+Use the stable `agentkb-modal` executable for normal production control-plane
+work. From a development checkout, `bun run modal/src/cli.ts ...` remains an
+equivalent repository-local fallback.
 
 Deploy the private app with the pinned Modal Python client:
 
@@ -20,7 +22,7 @@ locally, stage it, build a new L4 generation, validate the build response, and
 remove successful staging data:
 
 ```bash
-bun run modal/src/cli.ts refresh
+agentkb-modal refresh
 ```
 
 The refresh reads `wiki_path` and `chats_path` from
@@ -29,7 +31,7 @@ The refresh reads `wiki_path` and `chats_path` from
 used for localized chat search paths. Override only the wiki root when needed:
 
 ```bash
-bun run modal/src/cli.ts refresh --wiki-path /absolute/path/to/wiki
+agentkb-modal refresh --wiki-path /absolute/path/to/wiki
 ```
 
 Refresh uses the pinned official CLI boundary for Volume writes:
@@ -42,13 +44,13 @@ the corpus into memory.
 Inspect the active generation:
 
 ```bash
-bun run modal/src/cli.ts status
+agentkb-modal status
 ```
 
 Warm the active T4 search container and wait until it is ready:
 
 ```bash
-bun run modal/src/cli.ts warm
+agentkb-modal warm
 ```
 
 The warm response includes `startup_timing_ms` fields for the immutable
@@ -63,15 +65,44 @@ SQLite integrity check, or full count comparison on every new container.
 Search and reconstruct result paths against the configured local roots:
 
 ```bash
-bun run modal/src/cli.ts search --query "retry logic" --k 10
+agentkb-modal search --query "retry logic" --k 10
 ```
 
 Generate an ID or trigger a build only for data that was staged separately:
 
 ```bash
-bun run modal/src/cli.ts generation-id
-bun run modal/src/cli.ts build --generation-id <generation_id>
+agentkb-modal generation-id
+agentkb-modal build --generation-id <generation_id>
 ```
+
+Report actual hourly metered usage for the exact Modal app description
+`agentkb` over a bounded one-to-seven-day range:
+
+```bash
+agentkb-modal cost
+agentkb-modal cost --days 7
+```
+
+The schema-1 result includes the queried range, exact decimal-string
+`metered_cost`, exact totals by resource, and matching raw hourly rows. This is
+metered usage, not billed or invoiced cost: Modal reports can lag, and the
+reported totals are before credits and reservations.
+
+Preview or remove exactly the generation currently named by
+`previous_generation_id`:
+
+```bash
+agentkb-modal prune-previous --generation-id <generation_id> --dry-run
+agentkb-modal prune-previous --generation-id <generation_id> --force
+```
+
+Dry run validates the pointer, target directory, and matching manifest without
+remote mutation. A real prune requires `--force`, always refuses the current
+generation, atomically clears and commits the previous pointer before deletion,
+re-checks that the target is unreferenced, removes only the exact validated
+generation directory, then commits and verifies the final state. Races or
+malformed pointer state fail closed. A final deletion-commit failure leaves the
+already-cleared pointer safe and does not attempt risky compensation.
 
 ## SessionStart warm primitive
 
@@ -84,9 +115,15 @@ error output, and always exits successfully:
 bun run modal/src/session-start.ts
 ```
 
-The top-level session will deploy the live app and install the actual hook
-configuration later. This implementation does not deploy, mutate the Volume,
-start a GPU, or change global hooks.
+The stable SessionStart hook is installed and live. Accepted top-level session
+events can submit `warm_current`; warming may start billable remote GPU compute.
+Set `AGENTKB_SKIP_WARM=1` for sessions that must not submit a warm request.
+
+For local development of the control plane without the stable launcher:
+
+```bash
+bun run modal/src/cli.ts status
+```
 
 ## Generation contract
 

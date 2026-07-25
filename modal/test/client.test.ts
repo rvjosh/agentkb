@@ -81,3 +81,37 @@ test("search reconstructs local paths solely from relative_path", async () => {
   expect(JSON.stringify(result)).not.toContain("/root/");
   expect(JSON.stringify(result)).not.toContain("/container/cwd");
 });
+
+test("prune validates input and routes to the private CPU endpoint", async () => {
+  const calls: unknown[][] = [];
+  const modal = {
+    functions: {
+      fromName: async (...args: unknown[]) => {
+        calls.push(["fromName", ...args]);
+        return {
+          remote: async (args: unknown[]) => {
+            calls.push(["remote", args]);
+            return {
+              schema: 1,
+              dry_run: true,
+              deleted: false,
+              target_generation_id: ID,
+              current_generation_id: "g-20260725T130000Z-ddeeff001122",
+              previous_generation_id: ID,
+              final_previous_generation_id: ID,
+            };
+          },
+        };
+      },
+    },
+    close: () => {},
+  } as unknown as ModalClient;
+  const client = new ModalAgentKbClient(modal);
+  expect((await client.prunePrevious(ID, true)).dry_run).toBeTrue();
+  expect(calls).toEqual([
+    ["fromName", "agentkb", "prune_previous"],
+    ["remote", [ID, true]],
+  ]);
+  expect(client.prunePrevious("../escape", false)).rejects.toThrow();
+  expect(calls).toHaveLength(2);
+});

@@ -3,11 +3,13 @@ import { ModalClient } from "modal";
 import {
   APP_NAME,
   type BuildResult,
+  type PrunePreviousResult,
   type SearchResult,
   type StatusResponse,
   type WarmResult,
   validateBuildResult,
   validateGenerationId,
+  validatePrunePreviousResult,
   validateSearchRequest,
   validateSearchResult,
   validateStatus,
@@ -22,6 +24,10 @@ export interface AgentKbClient {
   warmDetached(): Promise<void>;
   search(query: string, k: number): Promise<SearchResult>;
   build(generationId: string): Promise<BuildResult>;
+  prunePrevious(
+    generationId: string,
+    dryRun: boolean,
+  ): Promise<PrunePreviousResult>;
   close(): void;
 }
 
@@ -63,6 +69,16 @@ export class ModalAgentKbClient implements AgentKbClient {
   async build(generationId: string): Promise<BuildResult> {
     const id = validateGenerationId(generationId);
     return validateBuildResult(await this.#call("build_generation", [id]));
+  }
+
+  async prunePrevious(
+    generationId: string,
+    dryRun: boolean,
+  ): Promise<PrunePreviousResult> {
+    const id = validateGenerationId(generationId);
+    return validatePrunePreviousResult(
+      await this.#call("prune_previous", [id, dryRun]),
+    );
   }
 
   close(): void {

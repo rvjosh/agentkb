@@ -83,3 +83,7 @@ Checking whether the AgentKB feature branch was ready to merge with the conventi
 ## 2026-07-25T16:10:32Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
 
 Opening the pushed AgentKB PR with `gh pr create --base master --head codex/agentkb-modal-benchmark` → GitHub simultaneously reported blank SHAs, no commits, and that the head was not a branch even though git push had just confirmed the remote ref; verify gh repo/ref resolution and use fully qualified repo/head when needed.
+
+## 2026-07-25T16:23:03Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f998d-ca23-7641-be7b-ddc0a74ff7d9
+
+Preparing a matched AgentKB retrieval comparison → `bun run modal/src/cli.ts search --help` exits with `unknown option: --help`; each production subcommand should expose concise usage without requiring source inspection.

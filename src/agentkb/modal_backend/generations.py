@@ -167,6 +167,88 @@ def restore_pointer(volume_root: Path, old_pointer: dict[str, Any] | None) -> No
         _atomic_write_json(path, old_pointer)
 
 
+def prune_previous_generation(
+    volume_root: Path,
+    generation_id: str,
+    *,
+    dry_run: bool,
+    commit: Callable[[], None],
+    reload: Callable[[], None] = lambda: None,
+) -> dict[str, Any]:
+    """Delete exactly the currently recorded previous generation, fail closed."""
+    generation_id = validate_generation_id(generation_id)
+    reload()
+    pointer = read_pointer(volume_root, required=True)
+    assert pointer is not None
+    current = pointer["current_generation_id"]
+    previous = pointer["previous_generation_id"]
+
+    # This check deliberately precedes the previous-pointer check. A malformed
+    # pointer that names the current generation twice must still refuse current.
+    if generation_id == current:
+        raise ValueError("refusing to prune the current generation")
+    if generation_id != previous:
+        raise ValueError(
+            "target generation must exactly equal previous_generation_id"
+        )
+
+    target = generation_path(volume_root, generation_id)
+    if not target.is_dir():
+        raise FileNotFoundError(f"generation directory does not exist: {generation_id}")
+    read_generation_manifest(volume_root, generation_id)
+
+    result = {
+        "schema": 1,
+        "dry_run": dry_run,
+        "deleted": False,
+        "target_generation_id": generation_id,
+        "current_generation_id": current,
+        "previous_generation_id": previous,
+        "final_previous_generation_id": previous,
+    }
+    if dry_run:
+        return result
+
+    cleared_pointer = {**pointer, "previous_generation_id": None}
+    _atomic_write_json(pointer_path(volume_root), cleared_pointer)
+    commit()
+
+    reload()
+    before_delete = read_pointer(volume_root, required=True)
+    assert before_delete is not None
+    if generation_id in (
+        before_delete["current_generation_id"],
+        before_delete["previous_generation_id"],
+    ):
+        raise RuntimeError(
+            "target generation became referenced after clearing; refusing deletion"
+        )
+    if not target.is_dir():
+        raise RuntimeError("target generation disappeared before deletion")
+    read_generation_manifest(volume_root, generation_id)
+
+    shutil.rmtree(target)
+    # If this commit fails, the already-committed cleared pointer remains the
+    # safe state. Do not restore it or otherwise compensate.
+    commit()
+
+    reload()
+    final_pointer = read_pointer(volume_root, required=True)
+    assert final_pointer is not None
+    if target.exists():
+        raise RuntimeError("target generation still exists after deletion commit")
+    if generation_id in (
+        final_pointer["current_generation_id"],
+        final_pointer["previous_generation_id"],
+    ):
+        raise RuntimeError("deleted generation is still referenced")
+    return {
+        **result,
+        "deleted": True,
+        "final_previous_generation_id": final_pointer["previous_generation_id"],
+    }
+
+
 def install_generation(
     volume_root: Path,
     generation_id: str,

@@ -122,6 +122,16 @@ export interface BuildResult {
   duration_ms: number;
 }
 
+export interface PrunePreviousResult {
+  schema: 1;
+  dry_run: boolean;
+  deleted: boolean;
+  target_generation_id: string;
+  current_generation_id: string;
+  previous_generation_id: string;
+  final_previous_generation_id: string | null;
+}
+
 export interface BuildMetrics {
   document_batch_size: number;
   document_batch_count: number;
@@ -175,6 +185,11 @@ function integerAt(
 function schemaAt(value: unknown, path: string): 1 {
   if (value !== 1) fail(path, "must equal 1");
   return 1;
+}
+
+function booleanAt(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") fail(path, "must be a boolean");
+  return value;
 }
 
 export function validateGenerationId(value: unknown): string {
@@ -620,6 +635,48 @@ export function validateBuildResult(value: unknown): BuildResult {
     ...buildMetrics,
     validation: validateIndexValidation(record.validation, corpusCount),
     duration_ms: finiteNumberAt(record.duration_ms, "build.duration_ms"),
+  };
+}
+
+export function validatePrunePreviousResult(
+  value: unknown,
+): PrunePreviousResult {
+  const record = objectAt(value, "prune_previous");
+  const dryRun = booleanAt(record.dry_run, "prune_previous.dry_run");
+  const deleted = booleanAt(record.deleted, "prune_previous.deleted");
+  const target = validateGenerationId(record.target_generation_id);
+  const current = validateGenerationId(record.current_generation_id);
+  const previous = validateGenerationId(record.previous_generation_id);
+  const finalPrevious =
+    record.final_previous_generation_id === null
+      ? null
+      : validateGenerationId(record.final_previous_generation_id);
+  if (target === current) {
+    fail("prune_previous.target_generation_id", "must not equal current_generation_id");
+  }
+  if (target !== previous) {
+    fail("prune_previous.target_generation_id", "must equal previous_generation_id");
+  }
+  if (dryRun === deleted) {
+    fail(
+      "prune_previous.deleted",
+      "must be false for dry runs and true for real prunes",
+    );
+  }
+  if (dryRun && finalPrevious !== previous) {
+    fail("prune_previous.final_previous_generation_id", "must remain previous on dry run");
+  }
+  if (deleted && finalPrevious === target) {
+    fail("prune_previous.final_previous_generation_id", "must not reference the deleted target");
+  }
+  return {
+    schema: schemaAt(record.schema, "prune_previous.schema"),
+    dry_run: dryRun,
+    deleted,
+    target_generation_id: target,
+    current_generation_id: current,
+    previous_generation_id: previous,
+    final_previous_generation_id: finalPrevious,
   };
 }
 

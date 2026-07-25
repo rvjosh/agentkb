@@ -4,6 +4,7 @@ import type { AgentKbClient } from "../src/client";
 import { handleSessionStart } from "../src/session-start";
 import type {
   BuildResult,
+  PrunePreviousResult,
   SearchResult,
   StatusResponse,
   WarmResult,
@@ -17,6 +18,7 @@ class HookClient implements AgentKbClient {
   async warmDetached(): Promise<void> { this.warmed += 1; }
   async search(): Promise<SearchResult> { throw new Error("unused"); }
   async build(): Promise<BuildResult> { throw new Error("unused"); }
+  async prunePrevious(): Promise<PrunePreviousResult> { throw new Error("unused"); }
   close(): void { this.closed += 1; }
 }
 

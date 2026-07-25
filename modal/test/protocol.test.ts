@@ -6,6 +6,7 @@ import {
   generationPaths,
   validateBuildResult,
   validateGenerationId,
+  validatePrunePreviousResult,
   validateSearchRequest,
   validateStatus,
   validateWarmResult,
@@ -207,4 +208,38 @@ test("rejects values that JSON would silently discard", () => {
     /JSON serializable/,
   );
   expect(() => assertJsonSerializable(Number.NaN)).toThrow(/finite JSON number/);
+});
+
+test("validates prune result state transitions", () => {
+  const current = "g-20260725T130000Z-ddeeff001122";
+  const dryRun = {
+    schema: 1,
+    dry_run: true,
+    deleted: false,
+    target_generation_id: ID,
+    current_generation_id: current,
+    previous_generation_id: ID,
+    final_previous_generation_id: ID,
+  };
+  expect(validatePrunePreviousResult(dryRun).deleted).toBeFalse();
+  expect(
+    validatePrunePreviousResult({
+      ...dryRun,
+      dry_run: false,
+      deleted: true,
+      final_previous_generation_id: null,
+    }).deleted,
+  ).toBeTrue();
+  expect(() =>
+    validatePrunePreviousResult({
+      ...dryRun,
+      current_generation_id: ID,
+    }),
+  ).toThrow(/must not equal/);
+  expect(() =>
+    validatePrunePreviousResult({
+      ...dryRun,
+      deleted: true,
+    }),
+  ).toThrow(/dry runs/);
 });
