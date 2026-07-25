@@ -123,7 +123,7 @@ def test_commit_failure_restores_existing_pointer(tmp_path):
 
     assert read_pointer(tmp_path) == original
     assert calls == 2
-    assert (generation_path(tmp_path, SECOND) / "index" / "complete").is_file()
+    assert not generation_path(tmp_path, SECOND).exists()
 
 
 def test_existing_generation_is_never_overwritten(tmp_path):

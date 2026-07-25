@@ -40,16 +40,23 @@ class IndexStore:
         content_root: Path | None = None,
         *,
         read_only: bool = False,
+        immutable_premerged: dict | None = None,
     ):
+        if immutable_premerged is not None and not read_only:
+            raise ValueError("immutable premerged mode requires read_only=True")
         self.index_dir = index_dir
         self.content_root = content_root.expanduser().resolve() if content_root else None
         self.read_only = read_only
+        self.immutable_premerged = immutable_premerged
         self.db_path = index_dir / "metadata.db"
         self.plaid_dir = index_dir / "plaid"
         self.state_path = index_dir / "state.json"
         self._conn: sqlite3.Connection | None = None
         self._plaid_index = None
         self._plaid_workspace: tempfile.TemporaryDirectory | None = None
+        self._read_only_plaid_mappings: tuple[
+            dict[str, int], dict[int, str]
+        ] | None = None
 
     def exists(self) -> bool:
         return self.db_path.exists()
@@ -185,6 +192,9 @@ class IndexStore:
 
     def _load_read_only_plaid_mappings(self) -> tuple[dict[str, int], dict[int, str]]:
         """Load current SQLite or legacy pickle mappings without source writes."""
+        if self._read_only_plaid_mappings is not None:
+            return self._read_only_plaid_mappings
+
         sqlite_paths = (
             self.plaid_dir / "documents_ids_to_plaid_ids.sqlite",
             self.plaid_dir / "plaid_ids_to_documents_ids.sqlite",
@@ -221,21 +231,34 @@ class IndexStore:
 
         if not forward or not reverse:
             raise RuntimeError("empty PLAID document ID mappings")
-        return forward, reverse
+        self._read_only_plaid_mappings = (forward, reverse)
+        return self._read_only_plaid_mappings
 
     def _load_read_only_plaid_index(self) -> None:
-        """Load PLAID through a disposable workspace that contains library writes.
+        """Load PLAID without allowing library writes into the source index.
 
-        FastPLAID's loader can rebuild merged cache files while opening an index.
-        Copying its runtime tree before loading keeps those writes away from the
-        source artifacts; :meth:`close` always removes the workspace.
+        Ordinary read-only stores isolate FastPLAID's mutable loader in a
+        disposable copy. Modal production instead uses its certified immutable
+        premerged adapter and never copies the source tree.
         """
-        from fast_plaid import search as fast_plaid_search
-
         forward, reverse = self._load_read_only_plaid_mappings()
         source = self.plaid_dir / "fast_plaid_index"
         if not source.is_dir():
             raise RuntimeError(f"missing FastPLAID index: {source}")
+
+        if self.immutable_premerged is not None:
+            from agentkb.fast_plaid_immutable import (
+                load_immutable_premerged_fast_plaid,
+            )
+
+            backend = load_immutable_premerged_fast_plaid(
+                source,
+                self.immutable_premerged,
+            )
+            self._plaid_index = (backend, forward, reverse)
+            return
+
+        from fast_plaid import search as fast_plaid_search
 
         workspace = tempfile.TemporaryDirectory(prefix="agentkb-plaid-readonly-")
         try:
@@ -415,6 +438,33 @@ class IndexStore:
         )
         self._plaid_index = index
 
+    def create_plaid_index(
+        self,
+        doc_ids: list[int],
+        embeddings: list,
+        *,
+        n_samples_kmeans: int,
+    ) -> None:
+        """Create a fresh PLAID index from one complete, aligned corpus."""
+        from pylate import indexes
+
+        if not doc_ids or len(doc_ids) != len(embeddings):
+            raise ValueError(
+                "PLAID document IDs and embeddings must be non-empty and aligned"
+            )
+
+        index = indexes.PLAID(
+            index_folder=str(self.index_dir),
+            index_name="plaid",
+            override=True,
+            n_samples_kmeans=n_samples_kmeans,
+        )
+        index.add_documents(
+            documents_ids=[str(doc_id) for doc_id in doc_ids],
+            documents_embeddings=embeddings,
+        )
+        self._plaid_index = index
+
     # --- Incremental indexing state ---
 
     def load_state(self) -> dict:
@@ -430,7 +480,13 @@ class IndexStore:
         if self._conn:
             self._conn.close()
             self._conn = None
+        if self._plaid_index is not None and self.read_only:
+            backend = self._plaid_index[0]
+            close = getattr(backend, "close", None)
+            if close is not None:
+                close()
         self._plaid_index = None
+        self._read_only_plaid_mappings = None
         if self._plaid_workspace is not None:
             self._plaid_workspace.cleanup()
             self._plaid_workspace = None

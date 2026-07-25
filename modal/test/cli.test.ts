@@ -11,6 +11,30 @@ import type {
 
 const ID = "g-20260725T123456Z-001122aabbcc";
 
+function immutableCertificate(documentCount: number) {
+  const tensor = { size_bytes: 1, dtype: "float16", shape: [1] };
+  return {
+    schema: 1 as const,
+    fast_plaid_version: "1.3.0.290",
+    num_chunks: 1,
+    nbits: 4,
+    document_count: documentCount,
+    padding_rows: 0,
+    artifacts: {
+      "metadata.json": { size_bytes: 1 },
+      "doclens.0.json": { size_bytes: 1 },
+      "centroids.npy": { ...tensor, shape: [2, 128] },
+      "avg_residual.npy": tensor,
+      "bucket_cutoffs.npy": tensor,
+      "bucket_weights.npy": tensor,
+      "ivf.npy": { ...tensor, dtype: "int64" },
+      "ivf_lengths.npy": { ...tensor, dtype: "int32" },
+      "merged_codes.npy": { ...tensor, dtype: "int64" },
+      "merged_residuals.npy": { ...tensor, dtype: "uint8", shape: [1, 16] },
+    },
+  };
+}
+
 class FakeClient implements AgentKbClient {
   calls: unknown[][] = [];
   closed = false;
@@ -34,8 +58,19 @@ class FakeClient implements AgentKbClient {
       generation_id: ID,
       model: "model",
       corpus_count: 1,
+      startup_timing_ms: {
+        artifact_mount: 1,
+        certificate: 1,
+        model: 1,
+        index_load: 1,
+        total: 4,
+      },
       ready: true,
     };
+  }
+
+  async warmDetached(): Promise<void> {
+    this.calls.push(["warmDetached"]);
   }
 
   async search(query: string, k: number): Promise<SearchResult> {
@@ -58,12 +93,20 @@ class FakeClient implements AgentKbClient {
       model: "model",
       corpus_count: 1,
       corpus_hash: "a".repeat(64),
+      document_batch_size: 256,
+      document_batch_count: 1,
+      embedding_dimension: 128,
+      staged_embedding_bytes: 256,
+      plaid_create_count: 1,
+      plaid_kmeans_sample_size: 16_384,
+      plaid_permutation_algorithm: "sha256-key-sort-v1",
       validation: {
         sqlite_count: 1,
         fts_count: 1,
         plaid_mapping_count: 1,
         plaid_reverse_mapping_count: 1,
         index_tree_hash: "b".repeat(64),
+        immutable_premerged: immutableCertificate(1),
       },
       duration_ms: 1,
     };
@@ -100,5 +143,5 @@ test("rejects invalid command input before a remote call", async () => {
     runCli(["search", "--query", "x", "--k", "0"], () => client, () => {}),
   ).rejects.toThrow(/between 1 and 100/);
   expect(client.calls).toEqual([]);
-  expect(client.closed).toBeTrue();
+  expect(client.closed).toBeFalse();
 });

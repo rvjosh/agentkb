@@ -15,6 +15,7 @@ from agentkb.modal_backend.generations import (
 APP_NAME = "agentkb"
 VOLUME_NAME = "agentkb-data"
 VOLUME_ROOT = Path("/agentkb-data")
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _download_model() -> None:
@@ -26,6 +27,7 @@ def _download_model() -> None:
 gpu_image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install(
+        "cbor2==6.1.3",
         "click==8.3.2",
         "fast-plaid==1.3.0.290",
         "huggingface-hub==0.35.3",
@@ -47,16 +49,18 @@ gpu_image = (
             "PYTHONPATH": "/root",
         }
     )
-    .add_local_dir("src/agentkb", remote_path="/root/agentkb", copy=True)
+    .add_local_dir(str(PACKAGE_ROOT), remote_path="/root/agentkb", copy=True)
     .run_function(
         _download_model,
         env={"HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"},
     )
 )
 
-router_image = modal.Image.debian_slim(
-    python_version="3.12"
-).add_local_dir("src/agentkb", remote_path="/root/agentkb", copy=True)
+router_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .uv_pip_install("cbor2==6.1.3")
+    .add_local_dir(str(PACKAGE_ROOT), remote_path="/root/agentkb", copy=True)
+)
 
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=False)
 app = modal.App(APP_NAME)
@@ -66,6 +70,7 @@ volume_mount = {VOLUME_ROOT: volume}
 @app.function(
     image=gpu_image,
     gpu="L4",
+    memory=32768,
     volumes=volume_mount,
     min_containers=0,
     max_containers=1,

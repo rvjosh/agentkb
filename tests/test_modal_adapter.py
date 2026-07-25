@@ -40,10 +40,16 @@ def test_adapter_has_private_named_resources_and_no_web_endpoints():
     assert "@modal.wsgi_app" not in source
 
 
+def test_both_sdk_called_images_install_cbor_support():
+    source = ADAPTER.read_text()
+    assert source.count('"cbor2==6.1.3"') == 2
+
+
 def test_gpu_image_adds_agentkb_before_model_download():
     source = ADAPTER.read_text()
+    assert "PACKAGE_ROOT = Path(__file__).resolve().parents[1]" in source
     add_source = source.index(
-        '.add_local_dir("src/agentkb", remote_path="/root/agentkb", copy=True)'
+        '.add_local_dir(str(PACKAGE_ROOT), remote_path="/root/agentkb", copy=True)'
     )
     download_model = source.index(".run_function(")
     assert add_source < download_model
@@ -63,6 +69,7 @@ def test_builder_and_search_resource_contract():
     builder = _decorator_keywords(functions["build_generation"], "function")
     assert builder == {
         "gpu": "L4",
+        "memory": 32768,
         "min_containers": 0,
         "max_containers": 1,
         "buffer_containers": 0,
@@ -115,3 +122,24 @@ def test_encoder_device_is_forwarded_without_loading_a_real_model(monkeypatch):
     assert calls == [
         {"model_name_or_path": "test-model", "device": "cuda"}
     ]
+
+
+def test_wire_search_result_uses_only_stored_relative_path():
+    from agentkb.modal_backend.runtime import _wire_search_result
+
+    result = SimpleNamespace(
+        relative_path="wiki/page.md",
+        to_json=lambda **_: {
+            "collection": "wiki",
+            "file": "/root/agentkb/wiki/page.md",
+            "path": "/root/agentkb/wiki/page.md",
+            "filename": "page.md",
+        },
+    )
+    assert _wire_search_result(result) == {
+        "collection": "wiki",
+        "file": "wiki/page.md",
+        "path": "wiki/page.md",
+        "filename": "page.md",
+        "relative_path": "wiki/page.md",
+    }

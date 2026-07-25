@@ -2,8 +2,15 @@
 
 import {
   type AgentKbClient,
-  ModalAgentKbClient,
+  createModalAgentKbClient,
 } from "./client";
+import {
+  type PathRoots,
+  type RefreshDependencies,
+  defaultRefreshDependencies,
+  refreshProduction,
+  resolvePathRoots,
+} from "./refresh";
 import {
   assertJsonSerializable,
   createGenerationId,
@@ -11,8 +18,18 @@ import {
   validateSearchRequest,
 } from "./protocol";
 
-export type ClientFactory = () => AgentKbClient;
+export type ClientFactory = (roots?: PathRoots) => AgentKbClient;
 export type Output = (line: string) => void;
+
+export interface CliDependencies {
+  refresh: RefreshDependencies;
+  resolveRoots(wikiPath?: string): Promise<PathRoots>;
+}
+
+const defaultCliDependencies: CliDependencies = {
+  refresh: defaultRefreshDependencies,
+  resolveRoots: resolvePathRoots,
+};
 
 function usage(): string {
   return [
@@ -20,6 +37,7 @@ function usage(): string {
     "  bun run modal/src/cli.ts status",
     "  bun run modal/src/cli.ts warm",
     "  bun run modal/src/cli.ts search --query <text> [--k <1-100>]",
+    "  bun run modal/src/cli.ts refresh [--wiki-path <path>]",
     "  bun run modal/src/cli.ts build --generation-id <id>",
     "  bun run modal/src/cli.ts generation-id",
   ].join("\n");
@@ -53,8 +71,9 @@ function writeJson(output: Output, value: unknown): void {
 
 export async function runCli(
   argv: string[],
-  clientFactory: ClientFactory = () => new ModalAgentKbClient(),
+  clientFactory: ClientFactory = createModalAgentKbClient,
   output: Output = console.log,
+  dependencies: CliDependencies = defaultCliDependencies,
 ): Promise<void> {
   const [command, ...args] = argv;
   if (!command || command === "--help" || command === "help") {
@@ -67,15 +86,17 @@ export async function runCli(
     return;
   }
 
-  const client = clientFactory();
+  let client: AgentKbClient | undefined;
   try {
     switch (command) {
       case "status":
         if (args.length) throw new TypeError("status takes no arguments");
+        client = clientFactory();
         writeJson(output, await client.status());
         return;
       case "warm":
         if (args.length) throw new TypeError("warm takes no arguments");
+        client = clientFactory();
         writeJson(output, await client.warm());
         return;
       case "search": {
@@ -84,7 +105,23 @@ export async function runCli(
           query: option(args, "--query"),
           k: option(args, "--k") === undefined ? 10 : Number(option(args, "--k")),
         });
+        const roots = await dependencies.resolveRoots();
+        client = clientFactory(roots);
         writeJson(output, await client.search(request.query, request.k));
+        return;
+      }
+      case "refresh": {
+        ensureKnownOptions(args, ["--wiki-path"]);
+        const wikiPath = option(args, "--wiki-path");
+        client = clientFactory();
+        writeJson(
+          output,
+          await refreshProduction(
+            client,
+            wikiPath === undefined ? {} : { wikiPath },
+            dependencies.refresh,
+          ),
+        );
         return;
       }
       case "build": {
@@ -92,6 +129,7 @@ export async function runCli(
         const generationId = validateGenerationId(
           option(args, "--generation-id"),
         );
+        client = clientFactory();
         writeJson(output, await client.build(generationId));
         return;
       }
@@ -99,7 +137,7 @@ export async function runCli(
         throw new TypeError(`unknown command: ${command}\n${usage()}`);
     }
   } finally {
-    client.close();
+    client?.close();
   }
 }
 

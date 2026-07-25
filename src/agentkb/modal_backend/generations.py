@@ -185,11 +185,13 @@ def install_generation(
 
     temporary = generations / f".{generation_id}.tmp-{uuid.uuid4().hex}"
     pointer_written = False
+    destination_installed = False
     old_pointer: dict[str, Any] | None = None
     try:
         shutil.copytree(local_generation, temporary)
         validate_copy(temporary)
         os.rename(temporary, destination)
+        destination_installed = True
         pointer, old_pointer = publish_pointer(volume_root, generation_id)
         pointer_written = True
         try:
@@ -197,6 +199,8 @@ def install_generation(
         except BaseException:
             restore_pointer(volume_root, old_pointer)
             pointer_written = False
+            shutil.rmtree(destination)
+            destination_installed = False
             try:
                 commit()
             except BaseException:
@@ -206,6 +210,8 @@ def install_generation(
     except BaseException:
         if pointer_written:
             restore_pointer(volume_root, old_pointer)
+        if destination_installed and destination.exists():
+            shutil.rmtree(destination)
         if temporary.exists():
             shutil.rmtree(temporary)
         raise

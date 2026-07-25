@@ -31,3 +31,47 @@ Validating the Modal adapter locally → Modal 1.5.3 crashes on a modal.paramete
 ## 2026-07-25T08:42:09Z · unknown · joshuaizzard · agentkb:. · 019f986a-0acd-74a3-b84a-9697ffc7c513
 
 Cleaning verification artifacts → compileall created an unignored __pycache__ inside the new package, and the command runner rejected removal of that exact generated directory via rm even though the safer trash command succeeded; prefer compile checks that suppress bytecode and suggest trash for generated cleanup.
+
+## 2026-07-25T09:01:13Z · unknown · joshuaizzard · agentkb:. · 019f987a-b44d-73a3-8d35-60c688a716d0
+
+Extending AgentKbClient with warmDetached during hook work → the first strict typecheck failed because existing injected test fakes did not implement the new interface method; a shared fake/helper pattern could make future client-surface additions less repetitive.
+
+## 2026-07-25T09:05:58Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+Production AgentKB refresh validation/upload → the 988 MB wiki+chat corpus was read and parsed wholesale, peaking at 6.33 GB local memory before upload; stream hashing/validation and batch the remote builder before retrying.
+
+## 2026-07-25T09:07:10Z · unknown · joshuaizzard · agentkb:. · 019f9887-2218-78a2-9a66-216784c4d062
+
+Repository inventory with an optional rg AGENTS.md lookup was chained with && → rg returned 1 for no matches and skipped the remaining read-only checks; use independent commands or tolerate the expected no-match status.
+
+## 2026-07-25T09:18:42Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+First TypeScript SDK call to the deployed AgentKB app → Modal returned “CBOR support requires cbor2” after a successful 988 MB stage; the Python worker/router images must include cbor2 whenever called from Modal’s JS SDK.
+
+## 2026-07-25T13:49:07Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+Running AgentKB’s documented-style model-free test suite with `uv run pytest` → pytest is not declared/provisioned, so uv could not spawn it; add a dev dependency group or document `uv run --with pytest pytest`.
+
+## 2026-07-25T13:53:35Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+Making the Modal builder memory-bounded by appending 256-document PLAID batches → FastPLAID silently fixes centroids from the first batch and only warns that later updates do not recompute them; expose/train-on-global-corpus semantics so bounded builds cannot accidentally degrade recall.
+
+## 2026-07-25T13:59:11Z · unknown · joshuaizzard · agentkb:. · 019f998d-6b2d-7e91-b015-295c63d979ee
+
+Inspecting installed FastPLAID metadata and patching the refresh contract → the shell has no bare `python` executable (use `uv run python`), and one apply_patch context missed because the import order differed from the expected snippet.
+
+## 2026-07-25T14:16:14Z · unknown · joshuaizzard · agentkb:. · 019f999e-9334-7842-b998-7358877871a6
+
+Updating the Modal README during cold-start work → the first apply_patch missed because its context split “K-means sample size” differently than expected; a narrower nearby-context patch succeeded.
+
+## 2026-07-25T14:16:32Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+Inspecting a Modal generation directory with `modal volume ls .../fast_plaid_index --json` → the command recursively emitted 7,058 entries / ~60k tokens with no obvious depth or summary option; add bounded listing/size support or document a safe inspection recipe.
+
+## 2026-07-25T14:18:13Z · unknown · joshuaizzard · agentkb:. · 019f99a3-c1ba-7fb0-a8c3-40b803f869be
+
+Inspecting the installed FastPLAID API → the repository environment has no `python` executable on PATH, so the obvious introspection command failed; use `uv run python` in this repo.
+
+## 2026-07-25T14:25:27Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+Deploying AgentKB with pinned `uvx --from modal==1.5.3 modal deploy src/agentkb/modal_backend/app.py` → Modal could not import the repo’s `agentkb` src-layout package; document/use the project environment (`uv run --with modal==1.5.3 modal deploy ...`) for deployment.

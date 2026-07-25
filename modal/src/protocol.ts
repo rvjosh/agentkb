@@ -1,4 +1,9 @@
 export const APP_NAME = "agentkb";
+export const DEFAULT_MODEL = "lightonai/GTE-ModernColBERT-v1";
+export const BUILD_DOCUMENT_BATCH_SIZE = 256;
+export const BUILD_PLAID_KMEANS_SAMPLE_SIZE = 16_384;
+export const BUILD_PLAID_PERMUTATION_ALGORITHM = "sha256-key-sort-v1";
+export const IMMUTABLE_FAST_PLAID_VERSION = "1.3.0.290";
 export const GENERATION_ID_PATTERN =
   /^g-\d{8}T\d{6}Z-[0-9a-f]{12}$/;
 export const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -15,6 +20,7 @@ export interface GenerationManifest {
   model: string;
   corpus_count: number;
   corpus_hash: string;
+  build?: BuildMetrics;
   validation?: IndexValidation;
 }
 
@@ -24,6 +30,23 @@ export interface IndexValidation {
   plaid_mapping_count: number;
   plaid_reverse_mapping_count: number;
   index_tree_hash: string;
+  immutable_premerged?: ImmutablePremergedCertificate;
+}
+
+export interface ImmutableArtifact {
+  size_bytes: number;
+  dtype?: string;
+  shape?: number[];
+}
+
+export interface ImmutablePremergedCertificate {
+  schema: 1;
+  fast_plaid_version: string;
+  num_chunks: number;
+  nbits: number;
+  document_count: number;
+  padding_rows: number;
+  artifacts: Record<string, ImmutableArtifact>;
 }
 
 export interface StatusResponse {
@@ -40,7 +63,16 @@ export interface WarmResult {
   generation_id: string;
   model: string;
   corpus_count: number;
+  startup_timing_ms: StartupTiming;
   ready: true;
+}
+
+export interface StartupTiming {
+  artifact_mount: number;
+  certificate: number;
+  model: number;
+  index_load: number;
+  total: number;
 }
 
 export interface SearchRequest {
@@ -55,7 +87,7 @@ export interface SearchHit {
   filename: string;
   line: number;
   score: number;
-  relative_path?: string;
+  relative_path: string;
   name?: string;
   unit_type?: string;
   title?: string;
@@ -79,8 +111,25 @@ export interface BuildResult {
   model: string;
   corpus_count: number;
   corpus_hash: string;
+  embedding_dimension: number;
+  staged_embedding_bytes: number;
+  document_batch_size: number;
+  document_batch_count: number;
+  plaid_create_count: 1;
+  plaid_kmeans_sample_size: number;
+  plaid_permutation_algorithm: string;
   validation: IndexValidation;
   duration_ms: number;
+}
+
+export interface BuildMetrics {
+  document_batch_size: number;
+  document_batch_count: number;
+  embedding_dimension: number;
+  staged_embedding_bytes: number;
+  plaid_create_count: 1;
+  plaid_kmeans_sample_size: number;
+  plaid_permutation_algorithm: string;
 }
 
 function fail(path: string, expectation: string): never {
@@ -174,7 +223,9 @@ export function createGenerationId(
 
 function validateIndexValidation(
   value: unknown,
+  expectedCorpusCount: number,
   path = "validation",
+  requireImmutablePremerged = true,
 ): IndexValidation {
   const record = objectAt(value, path);
   const indexTreeHash = stringAt(
@@ -184,7 +235,7 @@ function validateIndexValidation(
   if (!SHA256_PATTERN.test(indexTreeHash)) {
     fail(`${path}.index_tree_hash`, "must be lowercase SHA-256");
   }
-  return {
+  const result: IndexValidation = {
     sqlite_count: integerAt(record.sqlite_count, `${path}.sqlite_count`),
     fts_count: integerAt(record.fts_count, `${path}.fts_count`),
     plaid_mapping_count: integerAt(
@@ -197,11 +248,177 @@ function validateIndexValidation(
     ),
     index_tree_hash: indexTreeHash,
   };
+  if (
+    record.immutable_premerged === undefined &&
+    !requireImmutablePremerged
+  ) {
+    return result;
+  }
+  const immutableRecord = objectAt(
+    record.immutable_premerged,
+    `${path}.immutable_premerged`,
+  );
+  const numChunks = integerAt(
+    immutableRecord.num_chunks,
+    `${path}.immutable_premerged.num_chunks`,
+    1,
+  );
+  const documentCount = integerAt(
+    immutableRecord.document_count,
+    `${path}.immutable_premerged.document_count`,
+    1,
+  );
+  if (documentCount !== expectedCorpusCount) {
+    fail(
+      `${path}.immutable_premerged.document_count`,
+      "must match corpus_count",
+    );
+  }
+  const artifactRecord = objectAt(
+    immutableRecord.artifacts,
+    `${path}.immutable_premerged.artifacts`,
+  );
+  const requiredArtifacts = [
+    "metadata.json",
+    "centroids.npy",
+    "avg_residual.npy",
+    "bucket_cutoffs.npy",
+    "bucket_weights.npy",
+    "ivf.npy",
+    "ivf_lengths.npy",
+    "merged_codes.npy",
+    "merged_residuals.npy",
+    ...Array.from({ length: numChunks }, (_, index) => `doclens.${index}.json`),
+  ];
+  const artifacts = Object.fromEntries(
+    requiredArtifacts.map((name) => {
+      const artifactPath = `${path}.immutable_premerged.artifacts.${name}`;
+      const artifact = objectAt(artifactRecord[name], artifactPath);
+      const parsed: ImmutableArtifact = {
+        size_bytes: integerAt(artifact.size_bytes, `${artifactPath}.size_bytes`, 1),
+      };
+      if (name.endsWith(".npy")) {
+        parsed.dtype = stringAt(artifact.dtype, `${artifactPath}.dtype`);
+        if (!Array.isArray(artifact.shape) || artifact.shape.length < 1) {
+          fail(`${artifactPath}.shape`, "must be a non-empty array");
+        }
+        parsed.shape = artifact.shape.map((dimension, index) =>
+          integerAt(dimension, `${artifactPath}.shape[${index}]`, 1)
+        );
+      }
+      return [name, parsed];
+    }),
+  );
+  const fastPlaidVersion = stringAt(
+    immutableRecord.fast_plaid_version,
+    `${path}.immutable_premerged.fast_plaid_version`,
+  );
+  if (fastPlaidVersion !== IMMUTABLE_FAST_PLAID_VERSION) {
+    fail(
+      `${path}.immutable_premerged.fast_plaid_version`,
+      `must equal ${IMMUTABLE_FAST_PLAID_VERSION}`,
+    );
+  }
+  result.immutable_premerged = {
+    schema: schemaAt(
+      immutableRecord.schema,
+      `${path}.immutable_premerged.schema`,
+    ),
+    fast_plaid_version: fastPlaidVersion,
+    num_chunks: numChunks,
+    nbits: integerAt(
+      immutableRecord.nbits,
+      `${path}.immutable_premerged.nbits`,
+      1,
+    ),
+    document_count: documentCount,
+    padding_rows: integerAt(
+      immutableRecord.padding_rows,
+      `${path}.immutable_premerged.padding_rows`,
+    ),
+    artifacts,
+  };
+  return result;
+}
+
+function validateBuildMetrics(
+  value: unknown,
+  corpusCount: number,
+  path: string,
+): BuildMetrics {
+  const record = objectAt(value, path);
+  const documentBatchSize = integerAt(
+    record.document_batch_size,
+    `${path}.document_batch_size`,
+    1,
+  );
+  if (documentBatchSize !== BUILD_DOCUMENT_BATCH_SIZE) {
+    fail(
+      `${path}.document_batch_size`,
+      `must equal ${BUILD_DOCUMENT_BATCH_SIZE}`,
+    );
+  }
+  const documentBatchCount = integerAt(
+    record.document_batch_count,
+    `${path}.document_batch_count`,
+    1,
+  );
+  if (documentBatchCount !== Math.ceil(corpusCount / documentBatchSize)) {
+    fail(`${path}.document_batch_count`, "does not cover corpus_count exactly");
+  }
+  const plaidCreateCount = integerAt(
+    record.plaid_create_count,
+    `${path}.plaid_create_count`,
+    1,
+  );
+  if (plaidCreateCount !== 1) {
+    fail(`${path}.plaid_create_count`, "must equal 1");
+  }
+  const plaidKmeansSampleSize = integerAt(
+    record.plaid_kmeans_sample_size,
+    `${path}.plaid_kmeans_sample_size`,
+    16_384,
+    32_768,
+  );
+  if (plaidKmeansSampleSize !== BUILD_PLAID_KMEANS_SAMPLE_SIZE) {
+    fail(
+      `${path}.plaid_kmeans_sample_size`,
+      `must equal ${BUILD_PLAID_KMEANS_SAMPLE_SIZE}`,
+    );
+  }
+  const permutation = stringAt(
+    record.plaid_permutation_algorithm,
+    `${path}.plaid_permutation_algorithm`,
+  );
+  if (permutation !== BUILD_PLAID_PERMUTATION_ALGORITHM) {
+    fail(
+      `${path}.plaid_permutation_algorithm`,
+      `must equal ${BUILD_PLAID_PERMUTATION_ALGORITHM}`,
+    );
+  }
+  return {
+    document_batch_size: documentBatchSize,
+    document_batch_count: documentBatchCount,
+    embedding_dimension: integerAt(
+      record.embedding_dimension,
+      `${path}.embedding_dimension`,
+      1,
+    ),
+    staged_embedding_bytes: integerAt(
+      record.staged_embedding_bytes,
+      `${path}.staged_embedding_bytes`,
+      1,
+    ),
+    plaid_create_count: 1,
+    plaid_kmeans_sample_size: plaidKmeansSampleSize,
+    plaid_permutation_algorithm: permutation,
+  };
 }
 
 export function validateManifest(
   value: unknown,
   path = "manifest",
+  requireImmutablePremerged = true,
 ): GenerationManifest {
   const record = objectAt(value, path);
   const corpusHash = stringAt(record.corpus_hash, `${path}.corpus_hash`);
@@ -218,7 +435,16 @@ export function validateManifest(
   if (record.validation !== undefined) {
     result.validation = validateIndexValidation(
       record.validation,
+      result.corpus_count,
       `${path}.validation`,
+      requireImmutablePremerged,
+    );
+  }
+  if (record.build !== undefined) {
+    result.build = validateBuildMetrics(
+      record.build,
+      result.corpus_count,
+      `${path}.build`,
     );
   }
   return result;
@@ -241,7 +467,11 @@ export function validateStatus(value: unknown): StatusResponse {
   const previousManifest =
     record.previous_manifest === null
       ? null
-      : validateManifest(record.previous_manifest, "status.previous_manifest");
+      : validateManifest(
+          record.previous_manifest,
+          "status.previous_manifest",
+          false,
+        );
   if ((current === null) !== (currentManifest === null)) {
     fail("status.current_manifest", "must agree with current_generation_id");
   }
@@ -307,9 +537,9 @@ function validateSearchHit(value: unknown, index: number): SearchHit {
     filename: stringAt(record.filename, `${path}.filename`),
     line: integerAt(record.line, `${path}.line`, 1),
     score: finiteNumberAt(record.score, `${path}.score`),
+    relative_path: stringAt(record.relative_path, `${path}.relative_path`),
   };
   for (const key of [
-    "relative_path",
     "name",
     "unit_type",
     "title",
@@ -343,11 +573,28 @@ export function validateSearchResult(value: unknown): SearchResult {
 export function validateWarmResult(value: unknown): WarmResult {
   const record = objectAt(value, "warm");
   if (record.ready !== true) fail("warm.ready", "must equal true");
+  const timingRecord = objectAt(
+    record.startup_timing_ms,
+    "warm.startup_timing_ms",
+  );
+  const timing = Object.fromEntries(
+    ["artifact_mount", "certificate", "model", "index_load", "total"].map((field) => {
+      const value = finiteNumberAt(
+        timingRecord[field],
+        `warm.startup_timing_ms.${field}`,
+      );
+      if (value < 0) {
+        fail(`warm.startup_timing_ms.${field}`, "must be non-negative");
+      }
+      return [field, value];
+    }),
+  ) as unknown as StartupTiming;
   return {
     schema: schemaAt(record.schema, "warm.schema"),
     generation_id: validateGenerationId(record.generation_id),
     model: stringAt(record.model, "warm.model"),
     corpus_count: integerAt(record.corpus_count, "warm.corpus_count", 1),
+    startup_timing_ms: timing,
     ready: true,
   };
 }
@@ -358,6 +605,8 @@ export function validateBuildResult(value: unknown): BuildResult {
   if (!SHA256_PATTERN.test(corpusHash)) {
     fail("build.corpus_hash", "must be lowercase SHA-256");
   }
+  const corpusCount = integerAt(record.corpus_count, "build.corpus_count", 1);
+  const buildMetrics = validateBuildMetrics(record, corpusCount, "build");
   return {
     schema: schemaAt(record.schema, "build.schema"),
     generation_id: validateGenerationId(record.generation_id),
@@ -366,9 +615,10 @@ export function validateBuildResult(value: unknown): BuildResult {
         ? null
         : validateGenerationId(record.previous_generation_id),
     model: stringAt(record.model, "build.model"),
-    corpus_count: integerAt(record.corpus_count, "build.corpus_count", 1),
+    corpus_count: corpusCount,
     corpus_hash: corpusHash,
-    validation: validateIndexValidation(record.validation),
+    ...buildMetrics,
+    validation: validateIndexValidation(record.validation, corpusCount),
     duration_ms: finiteNumberAt(record.duration_ms, "build.duration_ms"),
   };
 }
