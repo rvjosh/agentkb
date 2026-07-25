@@ -228,6 +228,10 @@ def prune_previous_generation(
     reload()
     before_delete = read_pointer(volume_root, required=True)
     assert before_delete is not None
+    _validate_pointer_references(volume_root, before_delete)
+    if not target.is_dir():
+        raise RuntimeError("target generation disappeared before deletion")
+    read_generation_manifest(volume_root, generation_id)
     if generation_id in (
         before_delete["current_generation_id"],
         before_delete["previous_generation_id"],
@@ -235,10 +239,6 @@ def prune_previous_generation(
         raise RuntimeError(
             "target generation became referenced after clearing; refusing deletion"
         )
-    _validate_pointer_references(volume_root, before_delete)
-    if not target.is_dir():
-        raise RuntimeError("target generation disappeared before deletion")
-    read_generation_manifest(volume_root, generation_id)
 
     shutil.rmtree(target)
     # If this commit fails, the already-committed cleared pointer remains the
