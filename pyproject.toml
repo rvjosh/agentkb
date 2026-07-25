@@ -16,6 +16,11 @@ dependencies = [
     "boto3>=1.28",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 agentkb = "agentkb.cli:main"
 
