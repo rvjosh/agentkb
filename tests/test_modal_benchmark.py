@@ -9,7 +9,10 @@ import pytest
 
 from experiments.modal_benchmark.common import (
     BATCH_SIZE,
+    classify_snapshot_attempts,
     compare_query_results,
+    evaluate_l4_gates,
+    gpu_cost_usd,
     percentile,
     snapshot_documents,
     validate_tmp_root,
@@ -111,3 +114,84 @@ def test_compare_query_results_detects_ranking_change():
     remote = [{"label": "a", "result_ids": ["y", "x"], "scores": [2.0, 1.0]}]
     result = compare_query_results(local, remote)
     assert not result["all_top_k_ids_equal"]
+
+
+def test_followup_cost_and_l4_gates_are_strict():
+    assert gpu_cost_usd(10_000, 0.000164) == pytest.approx(0.00164)
+    passing = evaluate_l4_gates(13_529.9, 41_369.9)
+    assert passing["cold"]["passed"]
+    assert passing["build_1411"]["passed"]
+    failing = evaluate_l4_gates(13_530.0, 41_370.0)
+    assert not failing["cold"]["passed"]
+    assert not failing["build_1411"]["passed"]
+
+
+def test_snapshot_classification_requires_proof_and_is_bounded():
+    assert classify_snapshot_attempts(
+        4,
+        [2, 3],
+        restoration_proof=True,
+        creation_attempt_indexes=[0, 1],
+    ) == ["snapshot_creation", "snapshot_creation", "restored", "restored"]
+    assert classify_snapshot_attempts(
+        3, [0, 1, 2], restoration_proof=False
+    ) == ["unverified", "unverified", "unverified"]
+    with pytest.raises(ValueError):
+        classify_snapshot_attempts(9, [], restoration_proof=True)
+    with pytest.raises(ValueError):
+        classify_snapshot_attempts(3, [3], restoration_proof=True)
+    with pytest.raises(ValueError):
+        classify_snapshot_attempts(
+            3, [1], restoration_proof=True, creation_attempt_indexes=[1]
+        )
+
+
+def test_original_modal_app_preserves_reproduction_contract():
+    root = Path(__file__).parents[1] / "experiments" / "modal_benchmark"
+    source = (root / "modal_app.py").read_text()
+    assert 'APP_NAME = "agentkb-benchmark-20260725"' in source
+    assert 'VOLUME_NAME = "agentkb-benchmark-20260725-data"' in source
+    assert "GPU_OPTIONS = {" in source
+    assert "class WarmSearch:" in source
+    assert "def cold_search(" in source
+    assert "def benchmark_batch(" in source
+    assert "gpu_options(" not in source
+
+    for caller in ("modal_client.py", "run_modal_suite.py"):
+        caller_source = (root / caller).read_text()
+        assert (
+            "from experiments.modal_benchmark.modal_app import APP_NAME"
+            in caller_source
+        )
+    assert "--summary-only" in (root / "README.md").read_text()
+
+
+def test_followup_modal_app_uses_exact_bounded_private_configuration():
+    root = (
+        Path(__file__).parents[1]
+        / "experiments"
+        / "modal_benchmark"
+    )
+    source = (root / "gpu_followup_modal_app.py").read_text()
+    assert 'APP_NAME = "agentkb-gpu-benchmark-20260725"' in source
+    assert 'VOLUME_NAME = "agentkb-gpu-benchmark-20260725-data"' in source
+    assert '"max_containers": 1' in source
+    assert 'gpu_options("T4")' in source
+    assert 'gpu_options("L4")' in source
+    assert "enable_memory_snapshot=True" in source
+    assert 'experimental_options={"enable_gpu_snapshot": True}' in source
+    assert "@modal.enter(snap=True)" in source
+    assert "@modal.web_endpoint" not in source
+    assert "@modal.asgi_app" not in source
+    assert "@modal.wsgi_app" not in source
+
+    runner_source = (root / "followup_runner.py").read_text()
+    assert (
+        "from experiments.modal_benchmark.gpu_followup_modal_app import APP_NAME"
+        in runner_source
+    )
+    assert 'choices=["build", "search", "batch", "snapshot"]' in runner_source
+
+    readme = (root / "README.md").read_text()
+    assert "-m experiments.modal_benchmark.gpu_followup_modal_app" in readme
+    assert "--phase build" in readme

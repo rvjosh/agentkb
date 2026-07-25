@@ -29,6 +29,12 @@ OFFLINE_ENV = {
     "TRANSFORMERS_OFFLINE": "1",
     "HF_DATASETS_OFFLINE": "1",
 }
+T4_GPU_RATE_PER_SECOND = 0.000164
+L4_GPU_RATE_PER_SECOND = 0.000222
+L4_COLD_PARITY_GATE_MS = 13_530.0
+L4_BUILD_PARITY_GATE_MS = 41_370.0
+PRIOR_T4_COLD_P50_MS = 18_320.0
+MAX_SNAPSHOT_ATTEMPTS = 8
 
 
 def canonical_json(value: Any) -> str:
@@ -213,6 +219,60 @@ def summarize_ms(values: list[float]) -> dict[str, float | int]:
         "p95_ms": percentile(values, 0.95),
         "max_ms": max(values),
     }
+
+
+def gpu_cost_usd(duration_ms: float, rate_per_second: float) -> float:
+    """Calculate published GPU-only cost for a measured internal duration."""
+    return duration_ms / 1000 * rate_per_second
+
+
+def evaluate_l4_gates(
+    cold_p50_ms: float, build_internal_ms: float
+) -> dict[str, dict[str, float | bool]]:
+    """Evaluate the two predeclared L4/T4 published-rate parity gates."""
+    return {
+        "cold": {
+            "threshold_ms": L4_COLD_PARITY_GATE_MS,
+            "measured_ms": cold_p50_ms,
+            "passed": cold_p50_ms < L4_COLD_PARITY_GATE_MS,
+        },
+        "build_1411": {
+            "threshold_ms": L4_BUILD_PARITY_GATE_MS,
+            "measured_ms": build_internal_ms,
+            "passed": build_internal_ms < L4_BUILD_PARITY_GATE_MS,
+        },
+    }
+
+
+def classify_snapshot_attempts(
+    attempt_count: int,
+    restored_attempt_indexes: list[int],
+    *,
+    restoration_proof: bool,
+    creation_attempt_indexes: list[int] | None = None,
+) -> list[str]:
+    """Classify bounded snapshot attempts without assuming restoration."""
+    if not 1 <= attempt_count <= MAX_SNAPSHOT_ATTEMPTS:
+        raise ValueError("snapshot attempt count must be between 1 and 8")
+    if any(index < 0 or index >= attempt_count for index in restored_attempt_indexes):
+        raise ValueError("restored snapshot attempt index is out of range")
+    creation_attempt_indexes = creation_attempt_indexes or []
+    if any(index < 0 or index >= attempt_count for index in creation_attempt_indexes):
+        raise ValueError("snapshot creation attempt index is out of range")
+    if set(restored_attempt_indexes) & set(creation_attempt_indexes):
+        raise ValueError("snapshot attempts cannot be both creation and restored")
+    restored = set(restored_attempt_indexes) if restoration_proof else set()
+    creation = set(creation_attempt_indexes) if restoration_proof else set()
+    return [
+        (
+            "snapshot_creation"
+            if index in creation
+            else "restored"
+            if index in restored
+            else "unverified"
+        )
+        for index in range(attempt_count)
+    ]
 
 
 def query_result_ids(results: list[Any]) -> list[str]:

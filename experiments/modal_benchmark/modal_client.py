@@ -32,6 +32,11 @@ def main() -> None:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="print completion metadata instead of the result payload",
+    )
     args = parser.parse_args()
 
     if args.action == "build":
@@ -52,7 +57,19 @@ def main() -> None:
     payload = json.dumps(result, sort_keys=True)
     if args.output:
         args.output.write_text(payload + "\n")
-    print(payload)
+    if args.summary_only:
+        print(
+            json.dumps(
+                {
+                    "action": args.action,
+                    "completed": True,
+                    "count": result.get("count"),
+                },
+                sort_keys=True,
+            )
+        )
+    else:
+        print(payload)
 
 
 if __name__ == "__main__":

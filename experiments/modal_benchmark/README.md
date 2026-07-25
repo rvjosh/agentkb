@@ -23,7 +23,7 @@ uvx modal volume put agentkb-benchmark-20260725-data "$BENCHMARK_ROOT/manifest.j
 uvx modal deploy -m experiments.modal_benchmark.modal_app \
   --name agentkb-benchmark-20260725 --strategy recreate
 uv run --with modal==1.5.3 python -m experiments.modal_benchmark.modal_client build \
-  --output "$BENCHMARK_ROOT/modal-build.json"
+  --output "$BENCHMARK_ROOT/modal-build.json" --summary-only
 uvx modal volume get agentkb-benchmark-20260725-data generation "$BENCHMARK_ROOT/generation"
 
 uv run python -m experiments.modal_benchmark.local_runner validate \
@@ -64,3 +64,74 @@ pgrep -af 'experiments.modal_benchmark|agentkb-modal-benchmark' || true
 ```
 
 Modal CLI 1.5.3 has no separate `app delete` command; `app stop` permanently stops the deployed app and terminates its containers, but its stopped history row remains visible. Verify that the app has zero tasks and the exact Volume name is absent before moving the temporary local copy to Trash.
+
+## GPU follow-up: T4, L4, and T4 GPU snapshot
+
+The 2026-07-25 remote-only follow-up preserves the original benchmark result and writes its sanitized aggregate to [`results/gpu-followup-20260725.json`](results/gpu-followup-20260725.json). Its interpretation is in [`GPU_FOLLOWUP_FINDINGS.md`](GPU_FOLLOWUP_FINDINGS.md).
+
+The commands below are the exact reproduction sequence. They intentionally omit every local model, search, index-validation, and `run_local_suite` path.
+
+```bash
+uv sync
+uvx --from modal==1.5.3 modal profile current
+
+BENCHMARK_ROOT=/tmp/agentkb-modal-benchmark-gpu-20260725
+uv run python -m experiments.modal_benchmark.snapshot --output "$BENCHMARK_ROOT"
+
+uvx --from modal==1.5.3 modal volume create agentkb-gpu-benchmark-20260725-data
+uvx --from modal==1.5.3 modal volume put agentkb-gpu-benchmark-20260725-data \
+  "$BENCHMARK_ROOT/corpus.jsonl" corpus/corpus.jsonl
+uvx --from modal==1.5.3 modal volume put agentkb-gpu-benchmark-20260725-data \
+  "$BENCHMARK_ROOT/batch-1411.jsonl" corpus/batch-1411.jsonl
+uvx --from modal==1.5.3 modal volume put agentkb-gpu-benchmark-20260725-data \
+  "$BENCHMARK_ROOT/manifest.json" corpus/manifest.json
+
+uvx --from modal==1.5.3 modal deploy \
+  -m experiments.modal_benchmark.gpu_followup_modal_app \
+  --name agentkb-gpu-benchmark-20260725 --strategy recreate
+uv run --with modal==1.5.3 python -m experiments.modal_benchmark.followup_runner \
+  --phase build \
+  --output "$BENCHMARK_ROOT/generation-build-raw.json"
+uv run --with modal==1.5.3 python -m experiments.modal_benchmark.followup_runner \
+  --phase search --queries experiments/modal_benchmark/queries.json \
+  --output "$BENCHMARK_ROOT/search-raw.json"
+uv run --with modal==1.5.3 python -m experiments.modal_benchmark.followup_runner \
+  --phase snapshot --snapshot-attempts 6 \
+  --queries experiments/modal_benchmark/queries.json \
+  --output "$BENCHMARK_ROOT/snapshot-all-raw.json"
+uv run --with modal==1.5.3 python -m experiments.modal_benchmark.followup_runner \
+  --phase batch \
+  --output "$BENCHMARK_ROOT/batch-raw.json"
+
+uvx --from modal==1.5.3 modal app logs \
+  agentkb-gpu-benchmark-20260725 --timestamps \
+  > "$BENCHMARK_ROOT/modal-logs-final-raw.txt" 2>&1
+uv run python -m experiments.modal_benchmark.aggregate_followup \
+  --root "$BENCHMARK_ROOT" \
+  --output experiments/modal_benchmark/results/gpu-followup-20260725.json
+
+uvx --from modal==1.5.3 modal billing report \
+  --for today --resolution h --json \
+  > "$BENCHMARK_ROOT/billing-report-raw.json"
+```
+
+Snapshot creation is worker-specific. If the first six calls do not yield at least three log-proven restored samples, run at most two additional single-use calls and combine the private timing artifacts before aggregation. Never exceed eight attempts.
+
+The follow-up raw files contain private operational detail and stay beneath the exact temporary root. Do not print or commit them.
+
+### GPU follow-up cleanup
+
+Remove only the exact follow-up resources:
+
+```bash
+uvx --from modal==1.5.3 modal app stop \
+  agentkb-gpu-benchmark-20260725 --yes
+uvx --from modal==1.5.3 modal volume delete \
+  agentkb-gpu-benchmark-20260725-data --yes
+
+uvx --from modal==1.5.3 modal app list --json
+uvx --from modal==1.5.3 modal volume list --json
+
+trash /tmp/agentkb-modal-benchmark-gpu-20260725
+pgrep -af 'agentkb-gpu-benchmark-20260725|experiments.modal_benchmark' || true
+```
