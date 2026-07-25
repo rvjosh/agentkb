@@ -1,0 +1,228 @@
+{
+  "schema": 1,
+  "measured_at": "2026-07-25",
+  "corpus": {
+    "source_file_count": 522,
+    "canonical_chunk_count": 7561,
+    "corpus_sha256": "81107083b5a2736e758baecf6d55d23432779faef147df2674ad91f36dd1ab66",
+    "batch_chunk_count": 1411,
+    "batch_sha256": "1219f62b825a931cd3a278cc76e3b8d307815b7dc4911ef4f016ca29991f47d4"
+  },
+  "generation": {
+    "id": "6c49d046da07c38900e8d429086140a3108d747486821b1490b136ee17422eb3",
+    "tree_sha256": "70f32ea8559d9ba91f945dc4ba9c0cda000d5ae6da919925a50b1aef3457e759",
+    "model": "lightonai/GTE-ModernColBERT-v1",
+    "counts": {
+      "canonical": 7561,
+      "sqlite": 7561,
+      "fts": 7561,
+      "plaid_forward": 7561,
+      "plaid_reverse": 7561
+    },
+    "duplicates_or_orphans": 0,
+    "modal_build": {
+      "internal_seconds": 634.851047,
+      "authenticated_client_seconds": 683.0092,
+      "documents_per_second": 11.90988,
+      "stages_seconds": {
+        "model_load": 28.770972,
+        "encode": 136.087972,
+        "sqlite": 10.64998,
+        "plaid": 486.738824
+      }
+    }
+  },
+  "resources": {
+    "local": {
+      "accelerator": "CPU",
+      "model_cache": "local, offline"
+    },
+    "modal": {
+      "accelerator": "NVIDIA T4",
+      "gpu_count": 1,
+      "max_containers": 1,
+      "min_containers": 0,
+      "buffer_containers": 0,
+      "scaledown_window_seconds": 15,
+      "cpu_request_cores": 0.125,
+      "memory_request_gib": 0.125,
+      "cpu_memory_note": "The app did not set cpu or memory. These are Modal's documented default requests; CPU and memory are billed at the higher of request or actual use."
+    }
+  },
+  "search": {
+    "query_count": 12,
+    "top_k": 10,
+    "warm": {
+      "local": {
+        "initialization_ms": {
+          "total": 7121.903417,
+          "model_load": 6424.7385,
+          "metadata_load": 15.360584,
+          "index_load": 681.798375
+        },
+        "end_to_end_ms": {
+          "n": 12,
+          "min": 1412.16225,
+          "p50": 1720.127625,
+          "p95": 2829.511788,
+          "max": 3286.613167
+        },
+        "stages_ms": {
+          "query_encode": {"p50": 40.424333, "p95": 619.718639},
+          "semantic_search": {"p50": 1594.464229, "p95": 2132.464183},
+          "fts": {"p50": 17.695958, "p95": 56.854117},
+          "fusion": {"p50": 0.011896, "p95": 0.025377},
+          "result_hydration": {"p50": 17.995791, "p95": 223.241948}
+        }
+      },
+      "modal": {
+        "initialization_ms": {
+          "total": 21483.95965,
+          "volume_copy": 5345.464239,
+          "model_load": 15141.799967,
+          "metadata_load": 33.242792,
+          "index_load": 963.452652
+        },
+        "end_to_end_ms": {
+          "n": 12,
+          "min": 94.273088,
+          "p50": 114.954334,
+          "p95": 569.025795,
+          "max": 981.836687
+        },
+        "stages_ms": {
+          "query_encode": {"p50": 23.635916, "p95": 249.981633},
+          "semantic_search": {"p50": 49.324596, "p95": 239.980772},
+          "fts": {"p50": 6.573832, "p95": 38.892844},
+          "fusion": {"p50": 0.027188, "p95": 0.045337},
+          "result_hydration": {"p50": 31.58721, "p95": 55.889886}
+        }
+      },
+      "modal_speedup": {
+        "p50": 14.963574,
+        "p95": 4.972555
+      }
+    },
+    "cold": {
+      "local": {
+        "client_end_to_end_ms": {
+          "n": 3,
+          "min": 6747.056167,
+          "p50": 8297.44275,
+          "p95": 9902.470575,
+          "max": 10080.807
+        },
+        "stages_ms": {
+          "initialization": {"p50": 4831.274458, "p95": 5276.978045},
+          "model_load": {"p50": 4471.751541, "p95": 4562.025254},
+          "index_load": {"p50": 347.003375, "p95": 699.041862},
+          "query": {"p50": 2599.744542, "p95": 3346.774392}
+        }
+      },
+      "modal": {
+        "client_end_to_end_ms": {
+          "n": 3,
+          "min": 24439.297708,
+          "p50": 25473.383167,
+          "p95": 35712.360742,
+          "max": 36850.024917
+        },
+        "container_end_to_end_ms": {
+          "n": 3,
+          "min": 15890.988045,
+          "p50": 18317.971897,
+          "p95": 29678.606541,
+          "max": 30940.899279
+        },
+        "stages_ms": {
+          "initialization": {"p50": 16950.156408, "p95": 28255.852265},
+          "model_load": {"p50": 15579.542315, "p95": 25637.868099},
+          "volume_copy": {"p50": 308.770481, "p95": 1314.408774},
+          "index_load": {"p50": 1034.23165, "p95": 1269.392881},
+          "query": {"p50": 1364.636021, "p95": 1418.92931}
+        }
+      },
+      "modal_to_local_p50_ratio": 3.070028
+    },
+    "ranking_equality": {
+      "queries_compared": 12,
+      "exact_ordered_top_10": 11,
+      "equal_top_10_sets": 12,
+      "scores_within_0_001": 12,
+      "maximum_score_delta": 0.00048828125,
+      "differences": {
+        "query_count": 1,
+        "kind": "equal-score tie swapped",
+        "ranks": [6, 7]
+      }
+    }
+  },
+  "batch_1411": {
+    "local": {
+      "internal_seconds": 188.578447,
+      "authenticated_or_subprocess_client_seconds": 193.507548,
+      "documents_per_second": 7.482297,
+      "stages_seconds": {
+        "model_load": 3.585103,
+        "encode": 163.562949,
+        "sqlite": 3.519996,
+        "plaid": 21.295456
+      }
+    },
+    "modal": {
+      "internal_seconds": 56.012548,
+      "authenticated_or_subprocess_client_seconds": 56.946897,
+      "documents_per_second": 25.190784,
+      "stages_seconds": {
+        "model_load": 0.738347,
+        "encode": 25.461446,
+        "sqlite": 1.996977,
+        "plaid": 28.338588
+      }
+    },
+    "modal_internal_speedup": 3.366718
+  },
+  "cost_estimate_usd": {
+    "not_dashboard_authoritative": true,
+    "rates": {
+      "source": "https://modal.com/pricing",
+      "captured_at": "2026-07-25",
+      "t4_per_second": 0.000164,
+      "physical_cpu_core_per_second": 0.0000131,
+      "memory_gib_per_second": 0.00000222
+    },
+    "method": "Authenticated client elapsed time is used as a conservative runtime proxy. The estimate adds one T4 plus Modal's default 0.125-core and 0.125-GiB requests. Actual CPU and memory use, image builds, storage, credits, and billing boundaries are unavailable.",
+    "estimated_rate_per_second_at_minimum_requests": 0.000165915,
+    "measured_successful_calls": {
+      "proxy_runtime_seconds": 888.864136,
+      "gpu_only": 0.145774,
+      "gpu_plus_minimum_cpu_memory": 0.147476
+    },
+    "representative_month": {
+      "assumptions": {
+        "warm_searches": 10000,
+        "cold_searches": 100,
+        "batch_1411_runs": 30,
+        "runtime_basis": "warm p50, cold authenticated-client p50, and measured batch authenticated-client time"
+      },
+      "proxy_runtime_seconds": 5405.288552,
+      "gpu_plus_minimum_cpu_memory": 0.896818
+    },
+    "always_warm_reference": {
+      "hours_per_month": 730,
+      "gpu_plus_minimum_cpu_memory": 436.02462,
+      "note": "Reference only; this experiment used min_containers=0, not an always-warm deployment."
+    }
+  },
+  "decision_thresholds": {
+    "modal_warm_p50_under_2000_ms": {"threshold_ms": 2000, "measured_ms": 114.954334, "passed": true},
+    "modal_warm_p95_under_3000_ms": {"threshold_ms": 3000, "measured_ms": 569.025795, "passed": true},
+    "modal_cold_p50_under_7800_ms": {"threshold_ms": 7800, "measured_ms": 25473.383167, "passed": false},
+    "modal_batch_1411_under_60_s": {"threshold_seconds": 60, "measured_seconds": 56.012548, "passed": true},
+    "unchanged_rankings": {
+      "passed": true,
+      "interpretation": "All top-10 sets and scores within 0.001 match; one exact-score tie changed only the order of ranks 6 and 7."
+    }
+  },
+  "decision": "Modal is viable when warm-container behavior is acceptable. Warm search decisively wins and the T4 batch narrowly clears 60 seconds, but a 25.47-second scale-to-zero cold p50 is not acceptable for transparent interactive use."
+}

@@ -1,0 +1,14 @@
+[
+  {"label": "exact-agentkb", "text": "AgentKB", "scope": "wiki"},
+  {"label": "exact-fastapi", "text": "FastAPI", "scope": "wiki:source"},
+  {"label": "exact-colbert", "text": "ColBERT", "scope": "wiki:source"},
+  {"label": "exact-modal", "text": "Modal", "scope": "wiki"},
+  {"label": "concept-agent-memory", "text": "persistent memory for AI agents", "scope": "wiki"},
+  {"label": "concept-search-ranking", "text": "semantic search ranking and keyword fusion", "scope": "wiki"},
+  {"label": "concept-python-concurrency", "text": "Python asynchronous concurrency patterns", "scope": "wiki:source"},
+  {"label": "concept-deployment", "text": "deploy GPU workloads that scale to zero", "scope": "wiki:source"},
+  {"label": "page-package-management", "text": "uv Python package manager", "scope": "wiki"},
+  {"label": "page-database", "text": "SQLite full text search", "scope": "wiki"},
+  {"label": "source-api-design", "text": "OpenAI Responses API tools", "scope": "wiki:source"},
+  {"label": "source-version-control", "text": "Git branching and worktrees", "scope": "wiki:source"}
+]
