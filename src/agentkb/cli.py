@@ -19,6 +19,7 @@ class DefaultSearchGroup(click.Group):
 
 
 @click.group(cls=DefaultSearchGroup)
+@click.version_option(package_name="agentkb")
 def main():
     """Unified search and knowledge tool for AI agents and developers."""
     pass
