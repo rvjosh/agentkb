@@ -12,6 +12,10 @@ PLAID, then fuses the results with RRF.
 """
 
 import json
+import pickle
+import sqlite3
+
+import pytest
 
 from agentkb.store import IndexStore, Document, sanitize_fts5_query
 
@@ -44,6 +48,91 @@ def test_sanitize_special_chars():
 def test_sanitize_empty():
     """Returns empty string for garbage input."""
     assert sanitize_fts5_query("!@#$") == ""
+
+
+def test_read_only_plaid_mappings_are_loaded_once_per_store(tmp_path):
+    plaid_dir = tmp_path / "index" / "plaid"
+    plaid_dir.mkdir(parents=True)
+    paths = (
+        plaid_dir / "documents_ids_to_plaid_ids.pkl",
+        plaid_dir / "plaid_ids_to_documents_ids.pkl",
+    )
+    paths[0].write_bytes(pickle.dumps({"1": 0}))
+    paths[1].write_bytes(pickle.dumps({0: "1"}))
+    store = IndexStore(tmp_path / "index", read_only=True)
+
+    first = store._load_read_only_plaid_mappings()
+    paths[0].write_bytes(b"invalid after first read")
+    second = store._load_read_only_plaid_mappings()
+
+    assert second is first
+    store.close()
+    with pytest.raises(RuntimeError, match="cannot read PLAID"):
+        store._load_read_only_plaid_mappings()
+
+
+def test_read_only_metadata_uses_immutable_sqlite_uri(tmp_path, monkeypatch):
+    index_dir = tmp_path / "index"
+    writable = IndexStore(index_dir)
+    writable.create()
+    writable.close()
+    calls: list[tuple[str, bool]] = []
+    real_connect = sqlite3.connect
+
+    def recording_connect(database, *args, **kwargs):
+        calls.append((database, kwargs.get("uri", False)))
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", recording_connect)
+    store = IndexStore(index_dir, read_only=True)
+    try:
+        store._connect()
+    finally:
+        store.close()
+
+    assert len(calls) == 1
+    assert calls[0][1] is True
+    assert calls[0][0].endswith("?mode=ro&immutable=1")
+
+
+def test_immutable_premerged_store_never_copies_and_closes_backend(
+    tmp_path, monkeypatch
+):
+    fast_plaid_dir = tmp_path / "index" / "plaid" / "fast_plaid_index"
+    fast_plaid_dir.mkdir(parents=True)
+    closed = []
+
+    class Backend:
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(
+        "agentkb.fast_plaid_immutable.load_immutable_premerged_fast_plaid",
+        lambda path, certificate: (
+            Backend()
+            if path == fast_plaid_dir and certificate == {"schema": 1}
+            else pytest.fail("wrong immutable adapter arguments")
+        ),
+    )
+    monkeypatch.setattr(
+        "agentkb.store.shutil.copytree",
+        lambda *_args, **_kwargs: pytest.fail("immutable mode copied FastPLAID"),
+    )
+    store = IndexStore(
+        tmp_path / "index",
+        read_only=True,
+        immutable_premerged={"schema": 1},
+    )
+    monkeypatch.setattr(
+        store,
+        "_load_read_only_plaid_mappings",
+        lambda: ({"1": 0}, {0: "1"}),
+    )
+
+    store._load_read_only_plaid_index()
+    store.close()
+
+    assert closed == [True]
 
 
 # --- IndexStore CRUD ---

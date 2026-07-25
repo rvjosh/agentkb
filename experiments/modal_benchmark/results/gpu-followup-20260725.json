@@ -1,0 +1,449 @@
+{
+  "batch_1411": {
+    "l4": {
+      "client_end_to_end_ms": 50351.7675830517,
+      "count": 1411,
+      "documents_per_second": 50.32777213914677,
+      "internal_total_ms": 28036.210228,
+      "published_gpu_cost_at_internal_total_usd": 0.0062240386706160005,
+      "stage_split_ms": {
+        "encode_ms": 16240.171639,
+        "model_load_ms": 17101.145841999998,
+        "plaid_ms": 9502.507909000002,
+        "sqlite_ms": 2067.7333929999977
+      }
+    },
+    "t4": {
+      "client_end_to_end_ms": 99729.9744579941,
+      "count": 1411,
+      "documents_per_second": 20.638413091269403,
+      "internal_total_ms": 68367.659556,
+      "published_gpu_cost_at_internal_total_usd": 0.011212296167184,
+      "stage_split_ms": {
+        "encode_ms": 26856.297463000003,
+        "model_load_ms": 25340.614526999998,
+        "plaid_ms": 38949.221225999994,
+        "sqlite_ms": 2341.9252030000025
+      }
+    }
+  },
+  "billing": {
+    "actual_cost_usd": 0.22216071,
+    "exact_app_rows": 2,
+    "report_resolution": "hourly",
+    "status": "available from authoritative Modal billing report"
+  },
+  "corpus": {
+    "generation_count": 7600,
+    "one_shared_immutable_generation": true,
+    "staged_build_count": 1411
+  },
+  "decision": {
+    "gpu_snapshots": "worked, but save only a trivial amount per week for SessionStart warming and remain alpha; not worth first-deployment complexity",
+    "interactive_session_start_warming": "baseline T4",
+    "reason": "The one staged 1,411-document build was 28.04s on L4 versus 68.37s on T4 and cheaper on measured container time; this is one staged-build sample.",
+    "refresh_and_indexing_jobs": "L4 candidate",
+    "session_start_hook": "not wired"
+  },
+  "experiment": "agentkb-modal-gpu-followup-20260725",
+  "gates": {
+    "build_1411": {
+      "measured_ms": 28036.210228,
+      "passed": true,
+      "threshold_ms": 41370.0
+    },
+    "cold": {
+      "measured_ms": 19602.071408,
+      "passed": false,
+      "threshold_ms": 13530.0
+    }
+  },
+  "generation_build_t4": {
+    "client_end_to_end_ms": 668663.9464169857,
+    "internal_total_ms": 631577.0855929999,
+    "stage_split_ms": {
+      "encode_ms": 133544.830008,
+      "model_load_ms": 19016.462223000002,
+      "plaid_ms": 485755.43948099995,
+      "sqlite_ms": 11175.423878000003
+    }
+  },
+  "modal": {
+    "authenticated_profile": true,
+    "client_version": "1.5.3",
+    "gpu_snapshot_feature_status": "alpha"
+  },
+  "published_rates_usd_per_gpu_second": {
+    "checked_on": "2026-07-25",
+    "l4": 0.000222,
+    "source": "https://modal.com/pricing",
+    "t4": 0.000164
+  },
+  "resources": {
+    "app": "agentkb-gpu-benchmark-20260725",
+    "max_containers_per_worker": 1,
+    "public_endpoint": false,
+    "volume": "agentkb-gpu-benchmark-20260725-data"
+  },
+  "schema": 1,
+  "search": {
+    "l4_baseline": {
+      "cold": {
+        "classification": "fresh_container",
+        "client_end_to_end": {
+          "max_ms": 27834.98700003838,
+          "min_ms": 21272.71120902151,
+          "n": 3,
+          "p50_ms": 27587.278665974736,
+          "p95_ms": 27810.216166632017
+        },
+        "container_end_to_end": {
+          "max_ms": 21483.251007,
+          "min_ms": 15737.071964,
+          "n": 3,
+          "p50_ms": 19602.071408,
+          "p95_ms": 21295.1330471
+        },
+        "initialization": {
+          "index_load_ms": {
+            "max_ms": 1125.0770659999994,
+            "min_ms": 1045.735307000001,
+            "n": 3,
+            "p50_ms": 1062.854718999997,
+            "p95_ms": 1118.8548312999992
+          },
+          "initialization_ms": {
+            "max_ms": 20336.513306,
+            "min_ms": 14835.907366,
+            "n": 3,
+            "p50_ms": 18615.528603000002,
+            "p95_ms": 20164.4148357
+          },
+          "metadata_load_ms": {
+            "max_ms": 36.00068200000095,
+            "min_ms": 22.006624999999502,
+            "n": 3,
+            "p50_ms": 22.83078900000035,
+            "p95_ms": 34.68369270000089
+          },
+          "model_load_ms": {
+            "max_ms": 17871.644683,
+            "min_ms": 13513.558424,
+            "n": 3,
+            "p50_ms": 17218.332115,
+            "p95_ms": 17806.3134262
+          },
+          "volume_copy_ms": {
+            "max_ms": 1366.013222000003,
+            "min_ms": 249.2886330000026,
+            "n": 3,
+            "p50_ms": 254.6070099999991,
+            "p95_ms": 1254.8726008000026
+          }
+        },
+        "published_gpu_cost_at_container_p50_usd": 0.004351659852576,
+        "query_end_to_end": {
+          "max_ms": 1018.2686109999999,
+          "min_ms": 861.4539629999989,
+          "n": 3,
+          "p50_ms": 946.6823489999996,
+          "p95_ms": 1011.1099847999998
+        }
+      },
+      "warm_12_query_pass": {
+        "client_end_to_end_ms": 26842.74595801253,
+        "container_end_to_end_ms": 22979.170711,
+        "query_count": 12,
+        "query_timing": {
+          "end_to_end_ms": {
+            "max_ms": 1067.5871180000022,
+            "min_ms": 69.43973599999964,
+            "n": 12,
+            "p50_ms": 83.64137849999942,
+            "p95_ms": 553.9541893999992
+          },
+          "fts_ms": {
+            "max_ms": 38.535045999999795,
+            "min_ms": 1.9960260000004837,
+            "n": 12,
+            "p50_ms": 4.6556409999993775,
+            "p95_ms": 31.739930749999516
+          },
+          "fusion_ms": {
+            "max_ms": 0.050801000000433305,
+            "min_ms": 0.024798999998409954,
+            "n": 12,
+            "p50_ms": 0.02861950000010438,
+            "p95_ms": 0.049597050000471654
+          },
+          "model_query_encode_ms": {
+            "max_ms": 567.4487299999988,
+            "min_ms": 28.183497000000557,
+            "n": 12,
+            "p50_ms": 29.389877999999925,
+            "p95_ms": 272.94518879999833
+          },
+          "result_hydration_ms": {
+            "max_ms": 48.369959999998684,
+            "min_ms": 20.459242000001154,
+            "n": 12,
+            "p50_ms": 29.07755549999891,
+            "p95_ms": 42.442436199999435
+          },
+          "semantic_search_ms": {
+            "max_ms": 446.89330799999993,
+            "min_ms": 16.07342899999864,
+            "n": 12,
+            "p50_ms": 20.513238500001307,
+            "p95_ms": 216.7139003000014
+          }
+        }
+      }
+    },
+    "t4_baseline": {
+      "cold": {
+        "classification": "fresh_container",
+        "client_end_to_end": {
+          "max_ms": 34123.75649996102,
+          "min_ms": 21809.25362498965,
+          "n": 3,
+          "p50_ms": 25413.61233300995,
+          "p95_ms": 33252.74208326591
+        },
+        "container_end_to_end": {
+          "max_ms": 29483.968843,
+          "min_ms": 15018.572704,
+          "n": 3,
+          "p50_ms": 16415.950216999998,
+          "p95_ms": 28177.166980399998
+        },
+        "initialization": {
+          "index_load_ms": {
+            "max_ms": 936.3503760000001,
+            "min_ms": 704.9646019999986,
+            "n": 3,
+            "p50_ms": 911.8036869999991,
+            "p95_ms": 933.8957071
+          },
+          "initialization_ms": {
+            "max_ms": 28439.450901,
+            "min_ms": 14041.661648,
+            "n": 3,
+            "p50_ms": 15103.251857000001,
+            "p95_ms": 27105.8309966
+          },
+          "metadata_load_ms": {
+            "max_ms": 42.274858000002524,
+            "min_ms": 30.874680000000154,
+            "n": 3,
+            "p50_ms": 32.43029400000097,
+            "p95_ms": 41.29040160000237
+          },
+          "model_load_ms": {
+            "max_ms": 18697.154708,
+            "min_ms": 13012.804733,
+            "n": 3,
+            "p50_ms": 13341.308222,
+            "p95_ms": 18161.570059399997
+          },
+          "volume_copy_ms": {
+            "max_ms": 8798.062212,
+            "min_ms": 293.0176329999998,
+            "n": 3,
+            "p50_ms": 783.318400999999,
+            "p95_ms": 7996.5878309
+          }
+        },
+        "published_gpu_cost_at_container_p50_usd": 0.002692215835588,
+        "query_end_to_end": {
+          "max_ms": 941.2559839999997,
+          "min_ms": 862.6928000000014,
+          "n": 3,
+          "p50_ms": 932.398955,
+          "p95_ms": 940.3702810999997
+        }
+      },
+      "warm_12_query_pass": {
+        "client_end_to_end_ms": 29114.75349997636,
+        "container_end_to_end_ms": 22357.198966,
+        "query_count": 12,
+        "query_timing": {
+          "end_to_end_ms": {
+            "max_ms": 1054.4067819999973,
+            "min_ms": 83.19015300000032,
+            "n": 12,
+            "p50_ms": 116.82526649999936,
+            "p95_ms": 581.8393520499988
+          },
+          "fts_ms": {
+            "max_ms": 38.02698299999818,
+            "min_ms": 2.1971149999977513,
+            "n": 12,
+            "p50_ms": 5.188598000000155,
+            "p95_ms": 30.46521064999882
+          },
+          "fusion_ms": {
+            "max_ms": 0.049998999998024374,
+            "min_ms": 0.02691699999957109,
+            "n": 12,
+            "p50_ms": 0.031232000001324423,
+            "p95_ms": 0.04759934999878368
+          },
+          "model_query_encode_ms": {
+            "max_ms": 574.2709049999987,
+            "min_ms": 23.90376800000027,
+            "n": 12,
+            "p50_ms": 24.530789499998207,
+            "p95_ms": 287.1782518999994
+          },
+          "result_hydration_ms": {
+            "max_ms": 55.02438199999915,
+            "min_ms": 19.709276999996916,
+            "n": 12,
+            "p50_ms": 32.30992399999977,
+            "p95_ms": 48.390846850000806
+          },
+          "semantic_search_ms": {
+            "max_ms": 421.12534299999993,
+            "min_ms": 35.787534000000676,
+            "n": 12,
+            "p50_ms": 45.76924650000258,
+            "p95_ms": 227.70366729999952
+          }
+        }
+      }
+    }
+  },
+  "snapshot_t4": {
+    "attempt_count": 6,
+    "classifications": [
+      {
+        "attempt": 1,
+        "classification": "snapshot_creation",
+        "client_end_to_end_ms": 40827.91833404917,
+        "post_restore_container_ms": 2596.3181190000028
+      },
+      {
+        "attempt": 2,
+        "classification": "snapshot_creation",
+        "client_end_to_end_ms": 64263.92720802687,
+        "post_restore_container_ms": 3457.2196089999993
+      },
+      {
+        "attempt": 3,
+        "classification": "restored",
+        "client_end_to_end_ms": 29065.108458977193,
+        "post_restore_container_ms": 2088.074657000007
+      },
+      {
+        "attempt": 4,
+        "classification": "restored",
+        "client_end_to_end_ms": 13736.391042009927,
+        "post_restore_container_ms": 1882.5623430000037
+      },
+      {
+        "attempt": 5,
+        "classification": "restored",
+        "client_end_to_end_ms": 8316.929041990079,
+        "post_restore_container_ms": 1750.629473999993
+      },
+      {
+        "attempt": 6,
+        "classification": "restored",
+        "client_end_to_end_ms": 18203.870541998185,
+        "post_restore_container_ms": 2380.9914580000113
+      }
+    ],
+    "client_p50_improvement_vs_prior_18_32s_t4_percent": 12.826796986877422,
+    "client_p50_improvement_vs_same_deployment_t4_percent": 37.159146906241574,
+    "configuration": {
+      "enable_gpu_snapshot": true,
+      "enable_memory_snapshot": true,
+      "index_opened_after_restore": true,
+      "snap_boundary": "model initialization and representative query forward pass only"
+    },
+    "proof": {
+      "documented_restore_log_count": 2,
+      "post_restore_marker_count": 6,
+      "source": "exact app logs",
+      "verified": true
+    },
+    "restored_cold": {
+      "client_end_to_end": {
+        "max_ms": 29065.108458977193,
+        "min_ms": 8316.929041990079,
+        "n": 4,
+        "p50_ms": 15970.130792004056,
+        "p95_ms": 27435.922771430338
+      },
+      "post_restore_container": {
+        "max_ms": 2380.9914580000113,
+        "min_ms": 1750.629473999993,
+        "n": 4,
+        "p50_ms": 1985.3185000000053,
+        "p95_ms": 2337.0539378500107
+      },
+      "post_restore_initialization": {
+        "index_load_ms": {
+          "max_ms": 1061.4741310000113,
+          "min_ms": 858.7679839999964,
+          "n": 4,
+          "p50_ms": 944.8621829999979,
+          "p95_ms": 1045.0961353000096
+        },
+        "metadata_load_ms": {
+          "max_ms": 47.71777899998142,
+          "min_ms": 31.26850499999989,
+          "n": 4,
+          "p50_ms": 36.32324849999691,
+          "p95_ms": 46.429082799984656
+        },
+        "post_model_initialization_ms": {
+          "max_ms": 1441.2660469999707,
+          "min_ms": 1195.2100269999733,
+          "n": 4,
+          "p50_ms": 1359.0043979999962,
+          "p95_ms": 1436.1789570499739
+        },
+        "volume_copy_ms": {
+          "max_ms": 430.7887699999924,
+          "min_ms": 302.922016999986,
+          "n": 4,
+          "p50_ms": 329.58741049998963,
+          "p95_ms": 415.98157504999017
+        }
+      },
+      "published_gpu_cost_at_container_p50_usd": 0.0003255922340000009,
+      "query_end_to_end": {
+        "max_ms": 886.9433170000036,
+        "min_ms": 451.6741550000063,
+        "n": 4,
+        "p50_ms": 575.2309645000012,
+        "p95_ms": 847.5662326000033
+      }
+    },
+    "snapshot_creation_initialization": {
+      "model_load_ms": {
+        "max_ms": 16292.121800999998,
+        "min_ms": 15397.703015000001,
+        "n": 6,
+        "p50_ms": 15397.703015000001,
+        "p95_ms": 16068.517104499999
+      },
+      "representative_forward_ms": {
+        "max_ms": 749.2331579999991,
+        "min_ms": 463.69879000000225,
+        "n": 6,
+        "p50_ms": 463.69879000000225,
+        "p95_ms": 677.8495659999999
+      },
+      "snapshotted_initialization_ms": {
+        "max_ms": 17041.354958999997,
+        "min_ms": 15861.401805000003,
+        "n": 6,
+        "p50_ms": 15861.401805000003,
+        "p95_ms": 16746.3666705
+      }
+    }
+  }
+}

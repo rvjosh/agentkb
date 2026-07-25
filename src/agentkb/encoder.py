@@ -25,8 +25,9 @@ class ColBERTEncoder:
     Lazily loads the model on first use to avoid slow imports at CLI startup.
     """
 
-    def __init__(self, model_name: str = DEFAULT_MODEL):
+    def __init__(self, model_name: str = DEFAULT_MODEL, *, device: str = "cpu"):
         self.model_name = model_name
+        self.device = device
         self._model = None
 
     def _load(self):
@@ -37,7 +38,7 @@ class ColBERTEncoder:
 
         self._model = models.ColBERT(
             model_name_or_path=self.model_name,
-            device="cpu",  # safe default, auto-detect later
+            device=self.device,
         )
 
     def encode_documents(self, texts: list[str], batch_size: int = 32) -> list[np.ndarray]:
