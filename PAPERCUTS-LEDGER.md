@@ -19,3 +19,15 @@ Remote AgentKB generation build → the existing modal_client writes the request
 ## 2026-07-25T08:20:33Z · unknown · joshuaizzard · agentkb:. · 019f985a-37b4-7431-bbed-53b517adea57
 
 Modal benchmark closeout process scan → pgrep -af returned only the verification shell PID because the exact resource-name pattern appeared in that shell command; use ps output filtered to executable names or a pattern kept out of argv for an unambiguous check.
+
+## 2026-07-25T08:39:39Z · unknown · joshuaizzard · agentkb:. · 019f986a-0acd-74a3-b84a-9697ffc7c513
+
+Installing the new Modal TypeScript control-plane dependencies with Bun → Bun reported one blocked postinstall without identifying the package or whether it matters; surface the package name and impact directly in install output.
+
+## 2026-07-25T08:40:17Z · unknown · joshuaizzard · agentkb:. · 019f986a-0acd-74a3-b84a-9697ffc7c513
+
+Validating the Modal adapter locally → Modal 1.5.3 crashes on a modal.parameter annotation when postponed annotations turn str into a forward-reference string, and this repo has no bare python executable on PATH (uv run python is required); document the annotation limitation and standardize verification commands on uv.
+
+## 2026-07-25T08:42:09Z · unknown · joshuaizzard · agentkb:. · 019f986a-0acd-74a3-b84a-9697ffc7c513
+
+Cleaning verification artifacts → compileall created an unignored __pycache__ inside the new package, and the command runner rejected removal of that exact generated directory via rm even though the safer trash command succeeded; prefer compile checks that suppress bytecode and suggest trash for generated cleanup.
