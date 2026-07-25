@@ -26,7 +26,7 @@ import {
 } from "./protocol";
 
 export const VERSION = "0.1.0";
-export const DEFAULT_CONTENT_LIMIT = 600;
+export const DEFAULT_CONTENT_LIMIT = 1_200;
 export type ClientFactory = (roots?: PathRoots) => AgentKbClient;
 export type Output = (line: string) => void;
 
@@ -76,7 +76,7 @@ export function usage(): string {
     "  agentkb-modal -h | --help",
     "  agentkb-modal --version",
     "",
-    "Search content is limited to 600 characters by default; --full-content widens it.",
+    "Search content is limited to 1,200 characters by default; --full-content widens it.",
     "A real prune requires --force. --dry-run validates and plans without mutation.",
     "Cost reports are hourly metered usage for app description \"agentkb\".",
   ].join("\n");

@@ -68,7 +68,7 @@ Search and reconstruct result paths against the configured local roots:
 agentkb-modal search --query "retry logic" --k 10
 ```
 
-Each result's `content` is limited to 600 JavaScript string characters by
+Each result's `content` is limited to 1,200 JavaScript string characters by
 default. Truncated content ends with `…` within that limit and reports
 `content_truncated: true`; short or absent content reports
 `content_truncated: false`. Explicitly request the stored content without this
