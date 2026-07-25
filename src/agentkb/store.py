@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import pickle
 import re
 import shutil
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,23 +34,63 @@ class Document:
 class IndexStore:
     """Manages the on-disk index: SQLite for metadata/FTS and PLAID for vector search."""
 
-    def __init__(self, index_dir: Path, content_root: Path | None = None):
+    def __init__(
+        self,
+        index_dir: Path,
+        content_root: Path | None = None,
+        *,
+        read_only: bool = False,
+    ):
         self.index_dir = index_dir
         self.content_root = content_root.expanduser().resolve() if content_root else None
+        self.read_only = read_only
         self.db_path = index_dir / "metadata.db"
         self.plaid_dir = index_dir / "plaid"
         self.state_path = index_dir / "state.json"
         self._conn: sqlite3.Connection | None = None
         self._plaid_index = None
+        self._plaid_workspace: tempfile.TemporaryDirectory | None = None
 
     def exists(self) -> bool:
         return self.db_path.exists()
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
+            if self.read_only:
+                # immutable=1 is what prevents SQLite from creating WAL/SHM
+                # sidecars. This mode deliberately assumes an index rebuild
+                # cannot run concurrently with a no-refresh search.
+                uri = f"{self.db_path.resolve().as_uri()}?mode=ro&immutable=1"
+                self._conn = sqlite3.connect(uri, uri=True)
+            else:
+                self._conn = sqlite3.connect(str(self.db_path))
             self._conn.row_factory = sqlite3.Row
         return self._conn
+
+    def validate_for_search(self) -> None:
+        """Raise when an existing index lacks the artifacts needed by search."""
+        if not self.db_path.is_file():
+            raise RuntimeError(f"missing metadata database: {self.db_path}")
+        if not self.plaid_dir.is_dir() or not any(p.is_file() for p in self.plaid_dir.rglob("*")):
+            raise RuntimeError(f"missing or empty PLAID index: {self.plaid_dir}")
+        if self.read_only:
+            self._load_read_only_plaid_mappings()
+        try:
+            conn = self._connect()
+            tables = {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+                )
+            }
+            missing = {"documents", "documents_fts"} - tables
+            if missing:
+                raise RuntimeError(
+                    f"metadata database is missing tables: {', '.join(sorted(missing))}"
+                )
+            conn.execute("SELECT id FROM documents LIMIT 1").fetchone()
+        except sqlite3.Error as exc:
+            raise RuntimeError(f"cannot read metadata database: {exc}") from exc
 
     def create(self):
         """Create a fresh index store."""
@@ -129,6 +171,10 @@ class IndexStore:
         if self._plaid_index is not None:
             return
 
+        if self.read_only:
+            self._load_read_only_plaid_index()
+            return
+
         from pylate import indexes
 
         self._plaid_index = indexes.PLAID(
@@ -136,6 +182,72 @@ class IndexStore:
             index_name="plaid",
             override=False,
         )
+
+    def _load_read_only_plaid_mappings(self) -> tuple[dict[str, int], dict[int, str]]:
+        """Load current SQLite or legacy pickle mappings without source writes."""
+        sqlite_paths = (
+            self.plaid_dir / "documents_ids_to_plaid_ids.sqlite",
+            self.plaid_dir / "plaid_ids_to_documents_ids.sqlite",
+        )
+        pickle_paths = (
+            self.plaid_dir / "documents_ids_to_plaid_ids.pkl",
+            self.plaid_dir / "plaid_ids_to_documents_ids.pkl",
+        )
+
+        try:
+            if all(path.is_file() for path in sqlite_paths):
+                mappings = []
+                for path in sqlite_paths:
+                    uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
+                    with sqlite3.connect(uri, uri=True) as conn:
+                        rows = conn.execute('SELECT key, value FROM "unnamed"').fetchall()
+                    mappings.append({key: pickle.loads(value) for key, value in rows})
+                forward = {str(key): int(value) for key, value in mappings[0].items()}
+                reverse = {int(key): str(value) for key, value in mappings[1].items()}
+            elif all(path.is_file() for path in pickle_paths):
+                # PLAID mappings are trusted local index artifacts. Older AgentKB
+                # indexes used plain pickle dictionaries before PyLate moved to
+                # SqliteDict.
+                with pickle_paths[0].open("rb") as handle:
+                    forward_raw = pickle.load(handle)
+                with pickle_paths[1].open("rb") as handle:
+                    reverse_raw = pickle.load(handle)
+                forward = {str(key): int(value) for key, value in forward_raw.items()}
+                reverse = {int(key): str(value) for key, value in reverse_raw.items()}
+            else:
+                raise RuntimeError("missing PLAID document ID mappings")
+        except (OSError, sqlite3.Error, pickle.PickleError, EOFError, AttributeError, ValueError) as exc:
+            raise RuntimeError(f"cannot read PLAID document ID mappings: {exc}") from exc
+
+        if not forward or not reverse:
+            raise RuntimeError("empty PLAID document ID mappings")
+        return forward, reverse
+
+    def _load_read_only_plaid_index(self) -> None:
+        """Load PLAID through a disposable workspace that contains library writes.
+
+        FastPLAID's loader can rebuild merged cache files while opening an index.
+        Copying its runtime tree before loading keeps those writes away from the
+        source artifacts; :meth:`close` always removes the workspace.
+        """
+        from fast_plaid import search as fast_plaid_search
+
+        forward, reverse = self._load_read_only_plaid_mappings()
+        source = self.plaid_dir / "fast_plaid_index"
+        if not source.is_dir():
+            raise RuntimeError(f"missing FastPLAID index: {source}")
+
+        workspace = tempfile.TemporaryDirectory(prefix="agentkb-plaid-readonly-")
+        try:
+            workspace_index = Path(workspace.name) / "fast_plaid_index"
+            shutil.copytree(source, workspace_index)
+            backend = fast_plaid_search.FastPlaid(index=str(workspace_index))
+        except Exception:
+            workspace.cleanup()
+            raise
+
+        self._plaid_workspace = workspace
+        self._plaid_index = (backend, forward, reverse)
 
     def semantic_search(self, query_embedding: np.ndarray, top_k: int = 50, subset_ids: list[int] | None = None) -> list[tuple[int, float]]:
         """Run PLAID semantic search. Returns list of (doc_id, score).
@@ -150,6 +262,30 @@ class IndexStore:
         subset = None
         if subset_ids is not None:
             subset = [str(did) for did in subset_ids]
+
+        if self.read_only:
+            import torch
+
+            backend, forward, reverse = self._plaid_index
+            plaid_subset = None
+            if subset is not None:
+                plaid_subset = [[forward[doc_id] for doc_id in subset if doc_id in forward]]
+            query_tensor = (
+                torch.from_numpy(query_embedding)
+                if isinstance(query_embedding, np.ndarray)
+                else query_embedding
+            )
+            search_results = backend.search(
+                queries_embeddings=[query_tensor],
+                top_k=top_k,
+                subset=plaid_subset,
+                show_progress=False,
+            )
+            return [
+                (int(reverse[plaid_id]), score)
+                for plaid_id, score in search_results[0]
+                if plaid_id in reverse
+            ]
 
         results = self._plaid_index(
             [query_embedding],
@@ -295,6 +431,9 @@ class IndexStore:
             self._conn.close()
             self._conn = None
         self._plaid_index = None
+        if self._plaid_workspace is not None:
+            self._plaid_workspace.cleanup()
+            self._plaid_workspace = None
 
 
 

@@ -7,9 +7,16 @@ the results. This file tests each of those components independently.
 """
 
 from contextlib import redirect_stderr, redirect_stdout
+import hashlib
 from io import StringIO
+import pickle
+from pathlib import Path
+import sqlite3
+import tempfile
 
 from click.testing import CliRunner
+import numpy as np
+import pytest
 
 from agentkb.output import echo_status
 
@@ -24,7 +31,7 @@ from agentkb.search import (
     merge_multi_collection,
     search,
 )
-from agentkb.store import Document
+from agentkb.store import Document, IndexStore
 
 
 # --- rrf_fuse ---
@@ -374,6 +381,7 @@ def test_cli_search_json_sends_status_to_stderr_not_stdout(monkeypatch):
             exclude=(),
             exclude_dir=(),
             semantic_only=False,
+            no_refresh=False,
         )
 
     assert '"results": [' in stdout.getvalue()
@@ -419,6 +427,7 @@ def test_cli_search_json_full_content_is_opt_in(monkeypatch):
             exclude=(),
             exclude_dir=(),
             semantic_only=False,
+            no_refresh=False,
         )
 
     assert '"content": "raw section"' in stdout.getvalue()
@@ -476,9 +485,225 @@ def test_cli_search_json_chat_reindex_stays_valid_json(monkeypatch, tmp_path):
             exclude=(),
             exclude_dir=(),
             semantic_only=False,
+            no_refresh=False,
         )
 
     assert seen["json_output"] is True
     assert '"results": []' in stdout.getvalue()
     assert "[agentkb] Chat index: fake rebuild" not in stdout.getvalue()
     assert "[agentkb] Chat index: fake rebuild" in stderr.getvalue()
+
+
+def _build_real_index(
+    index_dir: Path,
+    content_root: Path,
+    collection: str,
+    *,
+    legacy_mappings: bool = False,
+) -> np.ndarray:
+    """Build a small usable FastPLAID index without loading an encoder model."""
+    content_root.mkdir(parents=True, exist_ok=True)
+    store = IndexStore(index_dir, content_root=content_root)
+    store.create()
+    docs = [
+        {
+            "collection": collection,
+            "file": f"existing-{number}.md",
+            "line": 1,
+            "name": f"Existing {number}",
+            "unit_type": "chunk",
+            "content": f"existing indexed content {number}",
+            "raw_content": f"existing indexed content {number}",
+        }
+        for number in range(32)
+    ]
+    ids = store.add_documents(docs)
+    rng = np.random.default_rng(7)
+    embeddings = [
+        rng.normal(size=(16, 128)).astype(np.float32)
+        for _ in docs
+    ]
+    embeddings = [
+        embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
+        for embedding in embeddings
+    ]
+    store.append_plaid_index(ids, embeddings)
+    store.save_state({"existing.md": "unchanged"})
+    store.close()
+
+    # Exercise the same WAL-mode metadata shape that previously created
+    # -wal/-shm files when opened with mode=ro alone.
+    conn = sqlite3.connect(index_dir / "metadata.db")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.close()
+
+    if legacy_mappings:
+        plaid_dir = index_dir / "plaid"
+        for stem in ("documents_ids_to_plaid_ids", "plaid_ids_to_documents_ids"):
+            sqlite_path = plaid_dir / f"{stem}.sqlite"
+            uri = f"{sqlite_path.resolve().as_uri()}?mode=ro&immutable=1"
+            with sqlite3.connect(uri, uri=True) as conn:
+                rows = conn.execute('SELECT key, value FROM "unnamed"').fetchall()
+            mapping = {key: pickle.loads(value) for key, value in rows}
+            if stem == "plaid_ids_to_documents_ids":
+                mapping = {int(key): value for key, value in mapping.items()}
+            with (plaid_dir / f"{stem}.pkl").open("wb") as handle:
+                pickle.dump(mapping, handle)
+            sqlite_path.unlink()
+
+    return embeddings[0]
+
+
+def _artifact_snapshot(path: Path) -> dict[str, tuple[bool, int, str, int]]:
+    """Capture existence, content hash, size, and mtime for a complete artifact tree."""
+    candidates = [path]
+    if path.is_dir():
+        candidates.extend(sorted(path.rglob("*")))
+
+    snapshot = {}
+    for candidate in candidates:
+        relative = "." if candidate == path else str(candidate.relative_to(path))
+        exists = candidate.exists()
+        if candidate.is_file():
+            content = candidate.read_bytes()
+        elif candidate.is_dir():
+            content = "\n".join(sorted(child.name for child in candidate.iterdir())).encode()
+        else:
+            content = b""
+        mtime = candidate.stat().st_mtime_ns if exists else 0
+        snapshot[relative] = (
+            exists,
+            len(content),
+            hashlib.sha256(content).hexdigest(),
+            mtime,
+        )
+    return snapshot
+
+
+class _FixtureEncoder:
+    def __init__(self, query_embedding):
+        self.query_embedding = query_embedding
+
+    def encode_query(self, _query):
+        return self.query_embedding
+
+
+@pytest.mark.parametrize(
+    ("legacy_mappings", "traceability_present"),
+    [(False, False), (True, True)],
+)
+def test_cli_search_no_refresh_real_semantic_path_preserves_source_artifacts(
+    monkeypatch, tmp_path, legacy_mappings, traceability_present
+):
+    """The production semantic path leaves current/legacy indexes and trace state untouched."""
+    wiki_root = tmp_path / "wiki"
+    query_embedding = _build_real_index(
+        wiki_root / ".index",
+        wiki_root,
+        "wiki",
+        legacy_mappings=legacy_mappings,
+    )
+    trace_db = tmp_path / "traceability.db"
+    if traceability_present:
+        with sqlite3.connect(trace_db) as conn:
+            conn.execute("CREATE TABLE existing_trace (value TEXT)")
+            conn.execute("INSERT INTO existing_trace VALUES ('untouched')")
+
+    monkeypatch.setattr(cli.paths, "agentkb_home", lambda: tmp_path)
+    monkeypatch.setattr(cli.paths, "wiki_dir", lambda: wiki_root)
+    monkeypatch.setattr(
+        "agentkb.wiki.ensure_search_store",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("wiki refresh called")),
+    )
+    monkeypatch.setattr(
+        "agentkb.cli.get_encoder",
+        lambda: _FixtureEncoder(query_embedding),
+    )
+    monkeypatch.setattr(
+        "agentkb.cli.SearchTrace",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("trace created")),
+    )
+
+    watched = [
+        wiki_root / ".index",
+        trace_db,
+        Path(f"{trace_db}-wal"),
+        Path(f"{trace_db}-shm"),
+        Path(f"{trace_db}-journal"),
+    ]
+    before = {str(path): _artifact_snapshot(path) for path in watched}
+    temp_before = set(Path(tempfile.gettempdir()).glob("agentkb-plaid-readonly-*"))
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["search", "--no-refresh", "--semantic-only", "-s", "wiki", "existing"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "[wiki]" in result.output
+    assert {str(path): _artifact_snapshot(path) for path in watched} == before
+    assert set(Path(tempfile.gettempdir()).glob("agentkb-plaid-readonly-*")) == temp_before
+    if legacy_mappings:
+        assert not (wiki_root / ".index/plaid/documents_ids_to_plaid_ids.sqlite").exists()
+        assert not (wiki_root / ".index/plaid/plaid_ids_to_documents_ids.sqlite").exists()
+
+
+def test_cli_search_no_refresh_fails_when_requested_index_is_missing(monkeypatch, tmp_path):
+    """Every requested scope must already have a usable index."""
+    wiki_root = tmp_path / "wiki"
+    monkeypatch.setattr(cli.paths, "wiki_dir", lambda: wiki_root)
+
+    result = CliRunner().invoke(
+        cli.main, ["search", "--no-refresh", "-s", "wiki", "query"]
+    )
+
+    assert result.exit_code == 1
+    assert "--no-refresh requires a usable wiki index" in result.output
+    assert "missing metadata database" in result.output
+    assert "Run `agentkb index`" in result.output
+
+
+def test_cli_search_no_refresh_missing_plaid_creates_no_artifact(monkeypatch, tmp_path):
+    """Missing PLAID fails without creating the directory or mapping files."""
+    wiki_root = tmp_path / "wiki"
+    index_dir = wiki_root / ".index"
+    store = IndexStore(index_dir)
+    store.create()
+    store.close()
+    monkeypatch.setattr(cli.paths, "wiki_dir", lambda: wiki_root)
+    before = _artifact_snapshot(index_dir)
+
+    result = CliRunner().invoke(
+        cli.main, ["search", "--no-refresh", "-s", "wiki", "query"]
+    )
+
+    assert result.exit_code == 1
+    assert "--no-refresh requires a usable wiki index" in result.output
+    assert "missing or empty PLAID index" in result.output
+    assert _artifact_snapshot(index_dir) == before
+    assert not (index_dir / "plaid").exists()
+
+
+def test_cli_search_no_refresh_corrupt_plaid_preserves_every_artifact(
+    monkeypatch, tmp_path
+):
+    """Corrupt FastPLAID fails through the real loader without repairing source files."""
+    wiki_root = tmp_path / "wiki"
+    index_dir = wiki_root / ".index"
+    query_embedding = _build_real_index(index_dir, wiki_root, "wiki")
+    (index_dir / "plaid/fast_plaid_index/metadata.json").write_text("{corrupt")
+    monkeypatch.setattr(cli.paths, "wiki_dir", lambda: wiki_root)
+    monkeypatch.setattr(
+        "agentkb.cli.get_encoder",
+        lambda: _FixtureEncoder(query_embedding),
+    )
+    before = _artifact_snapshot(index_dir)
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["search", "--no-refresh", "--semantic-only", "-s", "wiki", "query"],
+    )
+
+    assert result.exit_code == 1
+    assert "--no-refresh could not use the existing wiki index" in result.output
+    assert _artifact_snapshot(index_dir) == before

@@ -51,6 +51,7 @@ from agentkb.search import (  # noqa: E402
     merge_query_with_pattern,
     search as run_search,
 )
+from agentkb.store import IndexStore  # noqa: E402
 from agentkb.sync import (  # noqa: E402
     pull as do_pull,
     push as do_push,
@@ -69,6 +70,29 @@ SEARCH_STORES = {
 STATUS_STORES = [wiki_store, chats_store, communications_store, skills_store]
 
 
+def _open_existing_search_store(store_key: str) -> IndexStore:
+    """Open one already-built index without inspecting or changing its sources."""
+    if store_key == "wiki":
+        content_root = paths.wiki_dir()
+    elif store_key == "chats":
+        content_root = paths.chats_readable_dir()
+    else:
+        content_root = paths.communications_dir() / "readable"
+
+    index_dir = (
+        content_root / ".index"
+        if store_key == "wiki"
+        else content_root.parent / ".index"
+    )
+    store = IndexStore(index_dir, content_root=content_root, read_only=True)
+    try:
+        store.validate_for_search()
+    except RuntimeError:
+        store.close()
+        raise
+    return store
+
+
 @main.command()
 @click.argument("query")
 @click.option("-s", "--scope", type=click.Choice(["wiki", "wiki:notes", "wiki:source", "chats", "communications", "all"]), default="wiki")
@@ -84,8 +108,14 @@ STATUS_STORES = [wiki_store, chats_store, communications_store, skills_store]
 @click.option("--exclude", multiple=True, help="Exclude files matching glob")
 @click.option("--exclude-dir", multiple=True, help="Exclude directory")
 @click.option("--semantic-only", is_flag=True, help="Skip keyword search")
+@click.option(
+    "--no-refresh",
+    is_flag=True,
+    help="Search existing indexes read-only; fail instead of refreshing",
+)
 def search(query, scope, pattern, fixed, word, files_only, full_content,
-           top_k, context_lines, json_output, include, exclude, exclude_dir, semantic_only):
+           top_k, context_lines, json_output, include, exclude, exclude_dir,
+           semantic_only, no_refresh):
     """Search wiki, chats, or all."""
     scopes = ["wiki", "chats"] if scope == "all" else [scope]
     stores_to_search: list[tuple[str, object]] = []
@@ -94,7 +124,18 @@ def search(query, scope, pattern, fixed, word, files_only, full_content,
         # live in the wiki store.
         store_key = "wiki" if name.startswith("wiki") else name
         module = SEARCH_STORES[store_key]
-        store = module.ensure_search_store(json_output=json_output)
+        if no_refresh:
+            try:
+                store = _open_existing_search_store(store_key)
+            except RuntimeError as exc:
+                raise click.ClickException(
+                    f"--no-refresh requires a usable {store_key} index: {exc}. "
+                    "Run `agentkb index` to build or repair it."
+                ) from exc
+            # Also removes the disposable FastPLAID workspace on failures.
+            click.get_current_context().call_on_close(store.close)
+        else:
+            store = module.ensure_search_store(json_output=json_output)
         if store is not None:
             stores_to_search.append((name, store))
         elif name == scope:
@@ -113,22 +154,31 @@ def search(query, scope, pattern, fixed, word, files_only, full_content,
 
     per_store_results = []
     for scope_label, store in stores_to_search:
-        trace = SearchTrace(
+        trace = None if no_refresh else SearchTrace(
             original_query=query, semantic_query=semantic_query, pattern=pattern,
             fixed=fixed, word=word, scope=scope, top_k=top_k, include=include,
             exclude=all_exclude, semantic_only=semantic_only, model_name=DEFAULT_MODEL,
             collection=scope_label,
         )
-        results = run_search(
-            store=store, query_embedding=query_embedding, query_text=query,
-            scope=scope_label, top_k=top_k, pattern=pattern, fixed=fixed,
-            word=word, include=include, exclude=all_exclude, semantic_only=semantic_only,
-            trace=trace,
-        )
         try:
-            trace.save()
-        except Exception:
-            pass
+            results = run_search(
+                store=store, query_embedding=query_embedding, query_text=query,
+                scope=scope_label, top_k=top_k, pattern=pattern, fixed=fixed,
+                word=word, include=include, exclude=all_exclude, semantic_only=semantic_only,
+                trace=trace,
+            )
+        except Exception as exc:
+            if not no_refresh:
+                raise
+            raise click.ClickException(
+                f"--no-refresh could not use the existing {scope_label} index: {exc}. "
+                "Run `agentkb index` to repair it."
+            ) from exc
+        if trace is not None:
+            try:
+                trace.save()
+            except Exception:
+                pass
         per_store_results.append(results)
 
     if len(per_store_results) > 1:
@@ -520,4 +570,3 @@ def consolidate_communications_cmd(since):
     so the report points at current readable files.
     """
     _emit_consolidate_communications(since)
-

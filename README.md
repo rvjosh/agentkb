@@ -155,11 +155,16 @@ agentkb search -c "main entry point"                         # full content (inc
 agentkb search -l "authentication"                           # files only
 agentkb search --json "error handling"                       # compact metadata for scripts/agents
 agentkb search --semantic-only "retry"                       # skip keyword search
+agentkb search --no-refresh "retry"                          # existing index only; no refresh or trace write
 ```
 
 Results are tagged with their source: `[wiki]`, `[wiki:source]`, `[chats]`, `[communications]`.
 JSON search results use absolute `file`/`path` values, include `filename`, title,
 section, tags, and score metadata, and omit chunk content unless `-c` is passed.
+`--no-refresh` opens metadata and ID mappings as immutable SQLite inputs and
+runs FastPLAID from a cleaned-up temporary copy, so source index and traceability
+artifacts are not written. Do not rebuild an index concurrently with a
+`--no-refresh` search; immutable reads intentionally assume a stable index snapshot.
 
 Every search is recorded in `~/.agentkb/traceability.db` — the original query, semantic-expanded query, pattern, per-stage rankings (semantic / keyword / RRF), and final results. Useful for evals and for debugging why a result did or didn't surface.
 
