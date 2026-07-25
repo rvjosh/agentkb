@@ -116,6 +116,18 @@ def read_status(volume_root: Path) -> dict[str, Any]:
     }
 
 
+def _validate_pointer_references(
+    volume_root: Path, pointer: dict[str, Any]
+) -> None:
+    for field in ("current_generation_id", "previous_generation_id"):
+        generation_id = pointer[field]
+        if generation_id is None:
+            continue
+        if not generation_path(volume_root, generation_id).is_dir():
+            raise RuntimeError(f"{field} generation directory does not exist")
+        read_generation_manifest(volume_root, generation_id)
+
+
 def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(
@@ -191,11 +203,11 @@ def prune_previous_generation(
         raise ValueError(
             "target generation must exactly equal previous_generation_id"
         )
-
     target = generation_path(volume_root, generation_id)
     if not target.is_dir():
         raise FileNotFoundError(f"generation directory does not exist: {generation_id}")
     read_generation_manifest(volume_root, generation_id)
+    _validate_pointer_references(volume_root, pointer)
 
     result = {
         "schema": 1,
@@ -223,6 +235,7 @@ def prune_previous_generation(
         raise RuntimeError(
             "target generation became referenced after clearing; refusing deletion"
         )
+    _validate_pointer_references(volume_root, before_delete)
     if not target.is_dir():
         raise RuntimeError("target generation disappeared before deletion")
     read_generation_manifest(volume_root, generation_id)
@@ -242,6 +255,7 @@ def prune_previous_generation(
         final_pointer["previous_generation_id"],
     ):
         raise RuntimeError("deleted generation is still referenced")
+    _validate_pointer_references(volume_root, final_pointer)
     return {
         **result,
         "deleted": True,

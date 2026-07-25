@@ -24,6 +24,7 @@ export interface CostReport {
   schema: 1;
   queried_range: {
     start: string;
+    end: "now";
     resolution: "h";
   };
   days: number;
@@ -218,7 +219,7 @@ export function reportCost(
   );
   return {
     schema: 1,
-    queried_range: { start, resolution: "h" },
+    queried_range: { start, end: "now", resolution: "h" },
     days,
     app_name: APP_NAME,
     metered_cost: addDecimalStrings(rows.map((row) => row.cost)),
