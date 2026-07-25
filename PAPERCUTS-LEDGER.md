@@ -75,3 +75,7 @@ Inspecting the installed FastPLAID API → the repository environment has no `py
 ## 2026-07-25T14:25:27Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
 
 Deploying AgentKB with pinned `uvx --from modal==1.5.3 modal deploy src/agentkb/modal_backend/app.py` → Modal could not import the repo’s `agentkb` src-layout package; document/use the project environment (`uv run --with modal==1.5.3 modal deploy ...`) for deployment.
+
+## 2026-07-25T16:05:22Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+Checking whether the AgentKB feature branch was ready to merge with the conventional `origin/main` base → this repo has no `origin/main`, so the command failed; document the default branch or use the remote HEAD ref in merge recipes.
