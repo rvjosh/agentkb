@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 
 import type { AgentKbClient } from "../src/client";
 import {
+  DEFAULT_CONTENT_LIMIT,
   defaultCliDependencies,
   runCli,
   runMain,
+  shapeSearchResult,
 } from "../src/cli";
 import type {
   BuildResult,
@@ -148,7 +150,107 @@ test("routes search with parsed and default k", async () => {
   );
   expect(client.calls).toEqual([["search", "private knowledge", 10]]);
   expect(client.closed).toBeTrue();
-  expect(JSON.parse(output[0]!)).toMatchObject({ query: "private knowledge", k: 10 });
+  expect(JSON.parse(output[0]!)).toMatchObject({
+    query: "private knowledge",
+    k: 10,
+  });
+});
+
+test("bounds search content and preserves every other localized result field", () => {
+  const longContent = "x".repeat(DEFAULT_CONTENT_LIMIT + 25);
+  const shaped = shapeSearchResult({
+    schema: 1,
+    generation_id: ID,
+    query: "bounded",
+    k: 3,
+    results: [
+      {
+        collection: "wiki",
+        file: "/local/wiki/long.md",
+        path: "/local/wiki/long.md",
+        filename: "long.md",
+        relative_path: "long.md",
+        line: 4,
+        score: 0.9,
+        title: "Long result",
+        tags: ["kept"],
+        content: longContent,
+      },
+      {
+        collection: "chats",
+        file: "/local/chats/short.md",
+        path: "/local/chats/short.md",
+        filename: "short.md",
+        relative_path: "short.md",
+        line: 5,
+        score: 0.8,
+        content: "short content",
+      },
+      {
+        collection: "wiki:source",
+        file: "/local/wiki/absent.md",
+        path: "/local/wiki/absent.md",
+        filename: "absent.md",
+        relative_path: "absent.md",
+        line: 6,
+        score: 0.7,
+      },
+    ],
+  }, false);
+
+  expect(shaped.results[0]!.content).toHaveLength(DEFAULT_CONTENT_LIMIT);
+  expect(shaped.results[0]!.content).toBe(
+    `${"x".repeat(DEFAULT_CONTENT_LIMIT - 1)}…`,
+  );
+  expect(shaped.results[0]!.content_truncated).toBeTrue();
+  expect(shaped.results[0]).toMatchObject({
+    file: "/local/wiki/long.md",
+    path: "/local/wiki/long.md",
+    filename: "long.md",
+    relative_path: "long.md",
+    title: "Long result",
+    tags: ["kept"],
+  });
+  expect(shaped.results[1]!.content).toBe("short content");
+  expect(shaped.results[1]!.content_truncated).toBeFalse();
+  expect(shaped.results[2]).not.toHaveProperty("content");
+  expect(shaped.results[2]!.content_truncated).toBeFalse();
+});
+
+test("--full-content preserves content and makes exactly one search call", async () => {
+  const client = new FakeClient();
+  const content = "z".repeat(DEFAULT_CONTENT_LIMIT + 1);
+  client.search = async (query: string, k: number): Promise<SearchResult> => {
+    client.calls.push(["search", query, k]);
+    return {
+      schema: 1,
+      generation_id: ID,
+      query,
+      k,
+      results: [{
+        collection: "wiki",
+        file: "/local/wiki/result.md",
+        path: "/local/wiki/result.md",
+        filename: "result.md",
+        relative_path: "result.md",
+        line: 1,
+        score: 1,
+        content,
+      }],
+    };
+  };
+  const output: string[] = [];
+
+  await runCli(
+    ["search", "--query", "wide", "--k", "1", "--full-content"],
+    () => client,
+    (line) => output.push(line),
+  );
+
+  expect(client.calls).toEqual([["search", "wide", 1]]);
+  expect(JSON.parse(output[0]!)).toMatchObject({
+    results: [{ content, content_truncated: false }],
+  });
 });
 
 test("routes an already-staged build", async () => {
@@ -281,6 +383,7 @@ test("help wins anywhere and executable boundary classifies failures", async () 
     (line) => output.push(line),
   );
   expect(output.join("")).toContain("agentkb-modal");
+  expect(output.join("")).toContain("--full-content");
 
   const errors: string[] = [];
   expect(

@@ -87,3 +87,7 @@ Opening the pushed AgentKB PR with `gh pr create --base master --head codex/agen
 ## 2026-07-25T16:23:03Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f998d-ca23-7641-be7b-ddc0a74ff7d9
 
 Preparing a matched AgentKB retrieval comparison → `bun run modal/src/cli.ts search --help` exits with `unknown option: --help`; each production subcommand should expose concise usage without requiring source inspection.
+
+## 2026-07-25T16:41:39Z · unknown · joshuaizzard · agentkb:. · 019f9a27-3cc9-7c42-ae87-d2aed8c87ab1
+
+Starting the AgentKB bounded-output fix → the task says to follow each repository AGENTS.md, but agentkb has no AGENTS.md at its repository root; had to locate inherited/applicable instructions.

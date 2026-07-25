@@ -19,15 +19,26 @@ import {
 import {
   assertJsonSerializable,
   createGenerationId,
+  type SearchHit,
+  type SearchResult,
   validateGenerationId,
   validateSearchRequest,
 } from "./protocol";
 
 export const VERSION = "0.1.0";
+export const DEFAULT_CONTENT_LIMIT = 600;
 export type ClientFactory = (roots?: PathRoots) => AgentKbClient;
 export type Output = (line: string) => void;
 
 export class UsageError extends TypeError {}
+
+export interface CliSearchHit extends SearchHit {
+  content_truncated: boolean;
+}
+
+export interface CliSearchResult extends Omit<SearchResult, "results"> {
+  results: CliSearchHit[];
+}
 
 export interface CliDependencies {
   refresh: RefreshDependencies;
@@ -56,7 +67,7 @@ export function usage(): string {
     "Usage:",
     "  agentkb-modal status",
     "  agentkb-modal warm",
-    "  agentkb-modal search --query <text> [--k <1-100>]",
+    "  agentkb-modal search --query <text> [--k <1-100>] [--full-content]",
     "  agentkb-modal refresh [--wiki-path <path>]",
     "  agentkb-modal build --generation-id <id>",
     "  agentkb-modal prune-previous --generation-id <id> [--dry-run] [--force]",
@@ -65,6 +76,7 @@ export function usage(): string {
     "  agentkb-modal -h | --help",
     "  agentkb-modal --version",
     "",
+    "Search content is limited to 600 characters by default; --full-content widens it.",
     "A real prune requires --force. --dry-run validates and plans without mutation.",
     "Cost reports are hourly metered usage for app description \"agentkb\".",
   ].join("\n");
@@ -121,6 +133,29 @@ function writeJson(output: Output, value: unknown): void {
   output(JSON.stringify(assertJsonSerializable(value), null, 2));
 }
 
+export function shapeSearchResult(
+  result: SearchResult,
+  fullContent: boolean,
+): CliSearchResult {
+  return {
+    ...result,
+    results: result.results.map((hit) => {
+      if (
+        fullContent ||
+        hit.content === undefined ||
+        hit.content.length <= DEFAULT_CONTENT_LIMIT
+      ) {
+        return { ...hit, content_truncated: false };
+      }
+      return {
+        ...hit,
+        content: `${hit.content.slice(0, DEFAULT_CONTENT_LIMIT - 1)}…`,
+        content_truncated: true,
+      };
+    }),
+  };
+}
+
 export async function runCli(
   argv: string[],
   clientFactory: ClientFactory = createModalAgentKbClient,
@@ -171,7 +206,11 @@ export async function runCli(
         writeJson(output, await client.warm());
         return;
       case "search": {
-        ensureKnownOptions(args, { "--query": "value", "--k": "value" });
+        ensureKnownOptions(args, {
+          "--query": "value",
+          "--k": "value",
+          "--full-content": "boolean",
+        });
         const request = validateUsage(() =>
           validateSearchRequest({
             query: option(args, "--query"),
@@ -180,7 +219,13 @@ export async function runCli(
         );
         const roots = await dependencies.resolveRoots();
         client = clientFactory(roots);
-        writeJson(output, await client.search(request.query, request.k));
+        writeJson(
+          output,
+          shapeSearchResult(
+            await client.search(request.query, request.k),
+            args.includes("--full-content"),
+          ),
+        );
         return;
       }
       case "refresh": {
