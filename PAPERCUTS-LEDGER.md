@@ -79,3 +79,7 @@ Deploying AgentKB with pinned `uvx --from modal==1.5.3 modal deploy src/agentkb/
 ## 2026-07-25T16:05:22Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
 
 Checking whether the AgentKB feature branch was ready to merge with the conventional `origin/main` base → this repo has no `origin/main`, so the command failed; document the default branch or use the remote HEAD ref in merge recipes.
+
+## 2026-07-25T16:10:32Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019f97be-63de-7ce1-b6fe-0585e64b5c0e
+
+Opening the pushed AgentKB PR with `gh pr create --base master --head codex/agentkb-modal-benchmark` → GitHub simultaneously reported blank SHAs, no commits, and that the head was not a branch even though git push had just confirmed the remote ref; verify gh repo/ref resolution and use fully qualified repo/head when needed.
