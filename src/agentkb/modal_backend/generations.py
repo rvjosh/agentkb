@@ -116,8 +116,11 @@ def inventory_generations(
     volume_root: Path, *, max_entries: int = MAX_GENERATION_ENTRIES
 ) -> dict[str, Any]:
     """Return a bounded, metadata-only inventory or reject ambiguous state."""
-    if volume_root.is_symlink() or not volume_root.is_dir():
-        raise ValueError("configured volume root must be a real directory")
+    # Modal may expose the configured mount root itself through a symlink.
+    # Child directories and every target still reject symlinks and are resolved
+    # beneath this canonical root.
+    if not volume_root.is_dir():
+        raise ValueError("configured volume root must resolve to a directory")
     if (
         not isinstance(max_entries, int)
         or isinstance(max_entries, bool)

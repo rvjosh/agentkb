@@ -75,6 +75,17 @@ def test_inventory_classifies_every_generation_and_staging(tmp_path):
     assert "manifest" not in json.dumps(result)
 
 
+def test_inventory_accepts_a_symlinked_mount_root_but_not_symlinked_children(
+    tmp_path,
+):
+    real_root = tmp_path / "mounted-volume"
+    real_root.mkdir()
+    _volume(real_root)
+    mount_root = tmp_path / "agentkb-data"
+    mount_root.symlink_to(real_root, target_is_directory=True)
+    assert generations.inventory_generations(mount_root)["counts"]["current"] == 1
+
+
 @pytest.mark.parametrize("root_name", ["generations", "staged"])
 def test_inventory_rejects_malformed_and_symlink_entries(tmp_path, root_name):
     _volume(tmp_path)
