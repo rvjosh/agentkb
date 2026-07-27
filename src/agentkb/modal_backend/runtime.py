@@ -24,8 +24,9 @@ from agentkb.modal_backend.generations import (
     read_generation_manifest,
     staged_paths,
     validate_generation_id,
+    validate_session_key,
 )
-from agentkb.search import search
+from agentkb.search import search, search_transcript_sessions
 from agentkb.store import IndexStore
 
 
@@ -38,6 +39,29 @@ PLAID_PERMUTATION_ALGORITHM = "sha256-key-sort-v1"
 CORPUS_COLLECTIONS = {"wiki", "wiki:source", "chats"}
 SOURCE_MODES = {"upstream", "projection", "human-dependent", "disabled-costly"}
 SOURCE_STATES = {"fresh", "fallback", "stale", "failed"}
+
+
+def _central_transcript_identity(
+    collection: str, stored_file: str
+) -> tuple[str, str] | None:
+    if collection != "chats":
+        return None
+    parts = stored_file.split("/")
+    if len(parts) != 3 or parts[0] != "agent-history-central":
+        return None
+    source, filename = parts[1:]
+    if not filename.endswith(".md"):
+        return None
+    session_id = filename[:-3]
+    try:
+        exact_source, exact_session_id, canonical_file = validate_session_key(
+            source, session_id
+        )
+    except ValueError:
+        return None
+    if canonical_file != stored_file:
+        return None
+    return exact_source, exact_session_id
 
 
 def _validate_source_metadata(
@@ -884,9 +908,21 @@ class SearchRuntime:
         try:
             self.store.validate_for_search()
             self.store._load_plaid_index()
+            identity_catalog = self.store.get_document_catalog(collection="chats")
         except BaseException:
             self.store.close()
             raise
+        self.transcript_session_identities = {
+            doc_id: identity
+            for doc_id, collection, stored_file in identity_catalog
+            if (
+                identity := _central_transcript_identity(collection, stored_file)
+            )
+            is not None
+        }
+        self.transcript_session_doc_ids = tuple(
+            self.transcript_session_identities
+        )
         index_load_ms = (time.perf_counter() - index_started) * 1000
         self.startup_timing_ms = {
             "artifact_mount": artifact_mount_ms,
@@ -906,19 +942,32 @@ class SearchRuntime:
             "ready": True,
         }
 
-    def search(self, query: str, k: int) -> dict[str, Any]:
+    def search(
+        self, query: str, k: int, transcript_sessions: bool = False
+    ) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be a non-empty string")
         if not isinstance(k, int) or isinstance(k, bool) or not 1 <= k <= 100:
             raise ValueError("k must be an integer between 1 and 100")
+        if not isinstance(transcript_sessions, bool):
+            raise ValueError("transcript_sessions must be a boolean")
         embedding = self.encoder.encode_query(query)
-        results = search(
-            self.store,
-            embedding,
-            query,
-            scope="all",
-            top_k=k,
-        )
+        if transcript_sessions:
+            results = search_transcript_sessions(
+                self.store,
+                embedding,
+                top_k=k,
+                eligible_doc_ids=self.transcript_session_doc_ids,
+                session_identities=self.transcript_session_identities,
+            )
+        else:
+            results = search(
+                self.store,
+                embedding,
+                query,
+                scope="all",
+                top_k=k,
+            )
         return {
             "schema": 1,
             "generation_id": self.generation_id,

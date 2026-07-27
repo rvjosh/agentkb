@@ -139,8 +139,16 @@ class FakeClient implements AgentKbClient {
     this.calls.push(["warmDetached"]);
   }
 
-  async search(query: string, k: number): Promise<SearchResult> {
-    this.calls.push(["search", query, k]);
+  async search(
+    query: string,
+    k: number,
+    transcriptSessions?: boolean,
+  ): Promise<SearchResult> {
+    this.calls.push(
+      transcriptSessions
+        ? ["search", query, k, true]
+        : ["search", query, k],
+    );
     return {
       schema: 1,
       generation_id: ID,
@@ -213,6 +221,25 @@ test("routes search with parsed and default k", async () => {
     query: "private knowledge",
     k: 10,
   });
+});
+
+test("routes transcript session search only when explicitly enabled", async () => {
+  const client = new FakeClient();
+  await runCli(
+    [
+      "search",
+      "--query",
+      "private knowledge",
+      "--k",
+      "4",
+      "--transcript-sessions",
+    ],
+    () => client,
+    () => {},
+  );
+  expect(client.calls).toEqual([
+    ["search", "private knowledge", 4, true],
+  ]);
 });
 
 test("bounds search content and preserves every other localized result field", () => {

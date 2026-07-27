@@ -109,6 +109,10 @@ def test_adapter_exposes_only_sdk_functions_and_generation_methods():
     assert "@modal.method()" in source
     assert "def warm(" in source
     assert "def search(" in source
+    assert "transcript_sessions: bool = False" in source
+    assert "if transcript_sessions:" in source
+    assert "method.remote(query, k, True)" in source
+    assert "method.remote(query, k)" in source
 
 
 def test_encoder_device_is_forwarded_without_loading_a_real_model(monkeypatch):

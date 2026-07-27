@@ -407,6 +407,9 @@ def test_search_runtime_skips_full_validation_and_reports_startup_timings(
             assert device == "cuda"
             self.dim = 128
 
+        def encode_query(self, query):
+            return f"embedding:{query}"
+
     class SearchStore:
         def __init__(self, index_dir, *, read_only, immutable_premerged):
             assert index_dir == (
@@ -416,6 +419,7 @@ def test_search_runtime_skips_full_validation_and_reports_startup_timings(
             assert immutable_premerged["schema"] == 1
             self.validated = False
             self.loaded = False
+            self.catalog_calls = 0
 
         def validate_for_search(self):
             self.validated = True
@@ -423,6 +427,17 @@ def test_search_runtime_skips_full_validation_and_reports_startup_timings(
         def _load_plaid_index(self):
             assert self.validated
             self.loaded = True
+
+        def get_document_catalog(self, collection=None):
+            assert collection == "chats"
+            self.catalog_calls += 1
+            return [
+                (
+                    7,
+                    "chats",
+                    "agent-history-central/codex/session-1.md",
+                )
+            ]
 
         def close(self):
             pass
@@ -439,6 +454,20 @@ def test_search_runtime_skips_full_validation_and_reports_startup_timings(
         "validate_index",
         lambda *_args, **_kwargs: pytest.fail("startup reran full validation"),
     )
+    default_search_calls = []
+    transcript_search_calls = []
+    monkeypatch.setattr(
+        runtime,
+        "search",
+        lambda *args, **kwargs: default_search_calls.append((args, kwargs)) or [],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "search_transcript_sessions",
+        lambda *args, **kwargs: (
+            transcript_search_calls.append((args, kwargs)) or []
+        ),
+    )
 
     search_runtime = runtime.SearchRuntime(tmp_path, GENERATION_ID)
     try:
@@ -452,5 +481,41 @@ def test_search_runtime_skips_full_validation_and_reports_startup_timings(
             "total",
         }
         assert all(value >= 0 for value in result["startup_timing_ms"].values())
+        assert search_runtime.store.catalog_calls == 1
+        assert search_runtime.transcript_session_doc_ids == (7,)
+        search_runtime.search("control", 1)
+        search_runtime.search("experiment", 1, True)
+        search_runtime.search("experiment again", 1, True)
+        assert len(default_search_calls) == 1
+        assert len(transcript_search_calls) == 2
+        assert search_runtime.store.catalog_calls == 1
     finally:
         search_runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("collection", "stored_file", "expected"),
+    [
+        (
+            "chats",
+            "agent-history-central/claude/session-1.md",
+            ("claude", "session-1"),
+        ),
+        (
+            "chats",
+            "agent-history-central/codex/abc_123.md",
+            ("codex", "abc_123"),
+        ),
+        ("wiki", "agent-history-central/codex/session-1.md", None),
+        ("chats", "other/codex/session-1.md", None),
+        ("chats", "agent-history-central/pi/session-1.md", None),
+        ("chats", "agent-history-central/codex/../session-1.md", None),
+        ("chats", "agent-history-central/codex/.md", None),
+        ("chats", "agent-history-central/codex/session 1.md", None),
+        ("chats", "agent-history-central/codex/session-1.md/extra", None),
+    ],
+)
+def test_central_transcript_identity_requires_exact_safe_path(
+    collection, stored_file, expected
+):
+    assert runtime._central_transcript_identity(collection, stored_file) == expected

@@ -123,3 +123,7 @@ Canarying the new AgentKB generation inventory on Modal → local tests rejected
 ## 2026-07-27T10:18:03Z · unknown · joshuaizzard · agentkb:modal · 019fa313-0980-7df2-a5cb-2bc5e6cf4b77
 
 Running the focused AgentKB Modal CLI tests in the task worktree → Bun could not resolve the declared modal package because dependencies were not present; the task forbids installation, so a documented dependency-free test path or pre-provisioned worktree dependencies would help.
+
+## 2026-07-27T13:42:37Z · unknown · joshuaizzard · agentkb:. · 019fa3cf-9a52-7580-9c1a-3564e64973b8
+
+Checking repository parity before development → repo-sync status requires an explicit --target, but that requirement was easy to miss on the first call; surface the current target or a clearer hint.

@@ -120,6 +120,7 @@ export interface StartupTiming {
 export interface SearchRequest {
   query: string;
   k: number;
+  transcript_sessions?: boolean;
 }
 
 export interface SearchHit {
@@ -757,10 +758,17 @@ export function validateSearchRequest(value: unknown): SearchRequest {
   const record = objectAt(value, "search request");
   const query = stringAt(record.query, "search request.query");
   if (!query.trim()) fail("search request.query", "must not be empty");
-  return {
+  const request: SearchRequest = {
     query,
     k: integerAt(record.k, "search request.k", 1, 100),
   };
+  if (record.transcript_sessions !== undefined) {
+    if (typeof record.transcript_sessions !== "boolean") {
+      fail("search request.transcript_sessions", "must be a boolean");
+    }
+    request.transcript_sessions = record.transcript_sessions;
+  }
+  return request;
 }
 
 function optionalString(

@@ -84,6 +84,41 @@ test("search reconstructs local paths solely from relative_path", async () => {
   expect(JSON.stringify(result)).not.toContain("/container/cwd");
 });
 
+test("search preserves the old remote call and opts into the third argument", async () => {
+  const calls: unknown[][] = [];
+  const modal = {
+    functions: {
+      fromName: async (...args: unknown[]) => {
+        calls.push(["fromName", ...args]);
+        return {
+          remote: async (args: unknown[]) => {
+            calls.push(["remote", args]);
+            return {
+              schema: 1,
+              generation_id: ID,
+              query: "test",
+              k: 3,
+              results: [],
+            };
+          },
+        };
+      },
+    },
+    close: () => {},
+  } as unknown as ModalClient;
+  const client = new ModalAgentKbClient(modal);
+
+  await client.search("test", 3);
+  await client.search("test", 3, true);
+
+  expect(calls).toEqual([
+    ["fromName", "agentkb", "search_current"],
+    ["remote", ["test", 3]],
+    ["fromName", "agentkb", "search_current"],
+    ["remote", ["test", 3, true]],
+  ]);
+});
+
 test("prune validates input and routes to the private CPU endpoint", async () => {
   const calls: unknown[][] = [];
   const modal = {

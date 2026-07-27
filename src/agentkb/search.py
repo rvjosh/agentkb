@@ -314,6 +314,62 @@ def search(
     return results
 
 
+def search_transcript_sessions(
+    store: IndexStore,
+    query_embedding: np.ndarray,
+    *,
+    top_k: int,
+    eligible_doc_ids: tuple[int, ...],
+    session_identities: dict[int, tuple[str, str]],
+) -> list[SearchResult]:
+    """Return the best PLAID-ranked chunk for each eligible transcript session."""
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 100:
+        raise ValueError("top_k must be an integer between 1 and 100")
+    if not eligible_doc_ids:
+        return []
+
+    eligible_count = len(eligible_doc_ids)
+    fetch_k = min(top_k, eligible_count)
+    while True:
+        semantic_ranking = store.semantic_search(
+            query_embedding,
+            top_k=fetch_k,
+            subset_ids=list(eligible_doc_ids),
+        )
+        results: list[SearchResult] = []
+        seen: set[tuple[str, str]] = set()
+        for doc_id, score in semantic_ranking:
+            identity = session_identities.get(doc_id)
+            if identity is None or identity in seen:
+                continue
+            doc = store.get_document_by_id(doc_id)
+            if doc is None:
+                continue
+            seen.add(identity)
+            results.append(
+                SearchResult(
+                    collection=doc.collection,
+                    file=store.resolve_file_path(doc.file),
+                    line=doc.line,
+                    score=score,
+                    relative_path=doc.file,
+                    name=doc.name,
+                    unit_type=doc.unit_type,
+                    content=doc.content,
+                    raw_content=doc.raw_content,
+                    title=doc.title,
+                    section=doc.section,
+                    tags=json.loads(doc.tags) if doc.tags else [],
+                )
+            )
+            if len(results) >= top_k:
+                return results
+
+        if fetch_k >= eligible_count or len(semantic_ranking) < fetch_k:
+            return results
+        fetch_k = min(eligible_count, max(fetch_k + 1, fetch_k * 2))
+
+
 def merge_multi_collection(
     result_lists: list[list[SearchResult]],
     top_k: int = 3,

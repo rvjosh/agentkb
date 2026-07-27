@@ -331,6 +331,30 @@ class IndexStore:
             rows = conn.execute("SELECT id FROM documents ORDER BY id").fetchall()
         return [row["id"] for row in rows]
 
+    def get_document_catalog(
+        self, collection: str | None = None
+    ) -> list[tuple[int, str, str]]:
+        """Return stored document identity fields in deterministic ID order."""
+        conn = self._connect()
+        if collection:
+            rows = conn.execute(
+                """
+                SELECT id, collection, file
+                FROM documents
+                WHERE collection = ?
+                ORDER BY id
+                """,
+                (collection,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, collection, file FROM documents ORDER BY id"
+            ).fetchall()
+        return [
+            (int(row["id"]), str(row["collection"]), str(row["file"]))
+            for row in rows
+        ]
+
     def get_document_by_id(self, doc_id: int) -> Document | None:
         conn = self._connect()
         row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()

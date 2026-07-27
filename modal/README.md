@@ -116,6 +116,24 @@ fields are needed:
 agentkb-modal search --query "retry logic" --k 10 --metadata-only
 ```
 
+For conceptual coding-agent transcript retrieval, restrict PLAID to central
+agent-history documents and return one best-ranked representative chunk per
+unique session:
+
+```bash
+agentkb-modal search --query "retry logic" --k 10 \
+  --transcript-sessions --metadata-only
+```
+
+This mode is opt-in. Normal search continues to rank the complete
+`wiki`/`wiki:source`/`chats` corpus at chunk level. After deploying search-code
+changes, canary the grouped path without rebuilding the immutable generation:
+
+```bash
+agentkb-modal search --query "private knowledge" --k 4 \
+  --transcript-sessions --metadata-only
+```
+
 Metadata-only results retain the schema-1 envelope and backend result order,
 but omit both `content` and `content_truncated`. `--metadata-only` and
 `--full-content` cannot be combined.

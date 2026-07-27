@@ -119,8 +119,10 @@ class GenerationSearch:
         return self.runtime.warm()
 
     @modal.method()
-    def search(self, query: str, k: int) -> dict[str, Any]:
-        return self.runtime.search(query, k)
+    def search(
+        self, query: str, k: int, transcript_sessions: bool = False
+    ) -> dict[str, Any]:
+        return self.runtime.search(query, k, transcript_sessions)
 
     @modal.exit()
     def exit(self) -> None:
@@ -188,7 +190,12 @@ def warm_current() -> dict[str, Any]:
 
 
 @app.function(image=router_image, volumes=volume_mount, timeout=900)
-def search_current(query: str, k: int) -> dict[str, Any]:
+def search_current(
+    query: str, k: int, transcript_sessions: bool = False
+) -> dict[str, Any]:
     volume.reload()
     generation_id = resolve_current(VOLUME_ROOT)
-    return GenerationSearch(generation_id=generation_id).search.remote(query, k)
+    method = GenerationSearch(generation_id=generation_id).search
+    if transcript_sessions:
+        return method.remote(query, k, True)
+    return method.remote(query, k)

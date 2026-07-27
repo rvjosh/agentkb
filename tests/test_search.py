@@ -30,6 +30,7 @@ from agentkb.search import (
     SearchResult,
     merge_multi_collection,
     search,
+    search_transcript_sessions,
 )
 from agentkb.store import Document, IndexStore
 
@@ -288,6 +289,100 @@ def test_search_resolves_results_to_absolute_paths(tmp_path):
     assert len(results) == 1
     assert results[0].file == str((tmp_path / "wiki/tools/git.md").resolve())
     assert results[0].relative_path == "wiki/tools/git.md"
+
+
+class _AdaptiveTranscriptStore:
+    def __init__(self, rankings, documents):
+        self.rankings = rankings
+        self.documents = documents
+        self.calls = []
+
+    def semantic_search(self, _embedding, top_k=50, subset_ids=None):
+        self.calls.append((top_k, list(subset_ids)))
+        return self.rankings[:top_k]
+
+    def get_document_by_id(self, doc_id):
+        return self.documents.get(doc_id)
+
+    def resolve_file_path(self, file):
+        return f"/resolved/{file}"
+
+
+def _transcript_document(doc_id, session_id, line):
+    return Document(
+        id=doc_id,
+        collection="chats",
+        file=f"agent-history-central/codex/{session_id}.md",
+        line=line,
+        name=session_id,
+        unit_type="chunk",
+        content=f"chunk-{doc_id}",
+        raw_content=f"raw-{doc_id}",
+    )
+
+
+def test_transcript_session_search_adapts_and_preserves_first_representatives():
+    rankings = [
+        (1, 0.99),
+        (2, 0.98),
+        (3, 0.97),
+        (4, 0.96),
+        (5, 0.95),
+        (6, 0.90),
+        (7, 0.80),
+    ]
+    identities = {
+        **{doc_id: ("codex", "session-a") for doc_id in range(1, 6)},
+        6: ("claude", "session-b"),
+        7: ("codex", "session-c"),
+    }
+    documents = {
+        doc_id: _transcript_document(doc_id, identity[1], doc_id)
+        for doc_id, identity in identities.items()
+    }
+    store = _AdaptiveTranscriptStore(rankings, documents)
+
+    results = search_transcript_sessions(
+        store,
+        "embedding",
+        top_k=3,
+        eligible_doc_ids=tuple(identities),
+        session_identities=identities,
+    )
+
+    assert [result.name for result in results] == [
+        "session-a",
+        "session-b",
+        "session-c",
+    ]
+    assert [result.line for result in results] == [1, 6, 7]
+    assert [call[0] for call in store.calls] == [3, 6, 7]
+    assert all(call[1] == list(identities) for call in store.calls)
+
+
+def test_transcript_session_search_stops_safely_at_subset_exhaustion():
+    identities = {
+        1: ("codex", "session-a"),
+        2: ("codex", "session-a"),
+    }
+    store = _AdaptiveTranscriptStore(
+        [(1, 0.9), (2, 0.8)],
+        {
+            1: _transcript_document(1, "session-a", 1),
+            2: _transcript_document(2, "session-a", 2),
+        },
+    )
+
+    results = search_transcript_sessions(
+        store,
+        "embedding",
+        top_k=3,
+        eligible_doc_ids=(1, 2),
+        session_identities=identities,
+    )
+
+    assert [result.name for result in results] == ["session-a"]
+    assert store.calls == [(2, [1, 2])]
 
 
 # --- merge_multi_collection ---

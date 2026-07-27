@@ -71,9 +71,27 @@ test("validates search input bounds", () => {
     query: "agent memory",
     k: 10,
   });
+  expect(
+    validateSearchRequest({
+      query: "agent memory",
+      k: 10,
+      transcript_sessions: true,
+    }),
+  ).toEqual({
+    query: "agent memory",
+    k: 10,
+    transcript_sessions: true,
+  });
   expect(() => validateSearchRequest({ query: " ", k: 10 })).toThrow();
   expect(() => validateSearchRequest({ query: "x", k: 0 })).toThrow();
   expect(() => validateSearchRequest({ query: "x", k: 101 })).toThrow();
+  expect(() =>
+    validateSearchRequest({
+      query: "x",
+      k: 10,
+      transcript_sessions: "yes",
+    }),
+  ).toThrow();
 });
 
 test("validates versioned source receipts", () => {

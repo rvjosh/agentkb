@@ -42,7 +42,11 @@ export interface AgentKbClient {
   ): Promise<DeleteGenerationResult>;
   warm(): Promise<WarmResult>;
   warmDetached(): Promise<void>;
-  search(query: string, k: number): Promise<SearchResult>;
+  search(
+    query: string,
+    k: number,
+    transcriptSessions?: boolean,
+  ): Promise<SearchResult>;
   build(generationId: string): Promise<BuildResult>;
   prunePrevious(
     generationId: string,
@@ -134,10 +138,21 @@ export class ModalAgentKbClient implements AgentKbClient {
     await fn.spawn([]);
   }
 
-  async search(query: string, k: number): Promise<SearchResult> {
-    const request = validateSearchRequest({ query, k });
+  async search(
+    query: string,
+    k: number,
+    transcriptSessions = false,
+  ): Promise<SearchResult> {
+    const request = validateSearchRequest({
+      query,
+      k,
+      transcript_sessions: transcriptSessions,
+    });
+    const args = request.transcript_sessions
+      ? [request.query, request.k, true]
+      : [request.query, request.k];
     const result = validateSearchResult(
-      await this.#call("search_current", [request.query, request.k]),
+      await this.#call("search_current", args),
     );
     return this.#roots ? localizeSearchResult(result, this.#roots) : result;
   }

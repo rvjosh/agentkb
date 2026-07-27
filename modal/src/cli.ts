@@ -91,7 +91,7 @@ export function usage(): string {
     "  agentkb-modal delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb-modal delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb-modal warm",
-    "  agentkb-modal search --query <text> [--k <1-100>] [--full-content | --metadata-only]",
+    "  agentkb-modal search --query <text> [--k <1-100>] [--transcript-sessions] [--full-content | --metadata-only]",
     "  agentkb-modal refresh [--wiki-path <path>]",
     "  agentkb-modal make-current [--wiki-path <path>] [--json]",
     "  agentkb-modal build --generation-id <id>",
@@ -300,6 +300,7 @@ export async function runCli(
         ensureKnownOptions(args, {
           "--query": "value",
           "--k": "value",
+          "--transcript-sessions": "boolean",
           "--full-content": "boolean",
           "--metadata-only": "boolean",
         });
@@ -310,15 +311,21 @@ export async function runCli(
             "--metadata-only cannot be combined with --full-content",
           );
         }
+        const transcriptSessions = args.includes("--transcript-sessions");
         const request = validateUsage(() =>
           validateSearchRequest({
             query: option(args, "--query"),
             k: option(args, "--k") === undefined ? 10 : Number(option(args, "--k")),
+            ...(transcriptSessions ? { transcript_sessions: true } : {}),
           })
         );
         const roots = await dependencies.resolveRoots();
         client = clientFactory(roots);
-        const result = await client.search(request.query, request.k);
+        const result = await client.search(
+          request.query,
+          request.k,
+          request.transcript_sessions,
+        );
         writeJson(
           output,
           metadataOnly

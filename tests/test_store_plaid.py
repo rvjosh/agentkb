@@ -90,6 +90,30 @@ def test_semantic_search_with_subset(tmp_path):
     store.close()
 
 
+def test_document_catalog_is_filtered_and_ordered(tmp_path):
+    store = IndexStore(tmp_path / "idx")
+    store.create()
+    ids = store.add_documents(
+        [
+            {"collection": "wiki", "file": "wiki.md", "content": "wiki"},
+            {
+                "collection": "chats",
+                "file": "agent-history-central/codex/session-1.md",
+                "content": "chat",
+            },
+        ]
+    )
+
+    assert store.get_document_catalog(collection="chats") == [
+        (
+            ids[1],
+            "chats",
+            "agent-history-central/codex/session-1.md",
+        )
+    ]
+    store.close()
+
+
 # append_plaid_index is used for incremental indexing. When new wiki pages are
 # added or chat sessions are indexed, their embeddings are appended to the
 # existing PLAID index rather than rebuilding from scratch. This is much faster
