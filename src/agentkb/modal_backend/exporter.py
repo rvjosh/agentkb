@@ -323,8 +323,39 @@ def _history_records(
     try:
         connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
-        rows = connection.execute(
+        has_schema_meta = connection.execute(
             """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_meta'
+            """
+        ).fetchone()
+        if has_schema_meta is None:
+            schema_version = 1
+        else:
+            schema = connection.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if schema is None:
+                raise ValueError(
+                    "central history snapshot is missing its schema version"
+                )
+            try:
+                schema_version = int(schema["value"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "central history snapshot has a malformed schema version"
+                ) from exc
+        if schema_version not in {1, 2}:
+            raise ValueError(
+                f"unsupported central history schema version: {schema_version}"
+            )
+        sessions_relation = (
+            "publication_eligible_sessions"
+            if schema_version == 2
+            else "transcripts"
+        )
+        rows = connection.execute(
+            f"""
             WITH present_versions AS (
                 SELECT
                     t.source,
@@ -340,7 +371,7 @@ def _history_records(
                         PARTITION BY t.source, t.native_session_id
                         ORDER BY v.created_at DESC, v.sha256 DESC
                     ) AS version_rank
-                FROM transcripts t
+                FROM {sessions_relation} t
                 JOIN versions v ON v.transcript_id = t.id
                 WHERE v.parser_status = 'ok'
                   AND EXISTS (

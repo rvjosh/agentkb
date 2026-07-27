@@ -93,6 +93,16 @@ source JSONL
 
 The readable markdown keeps user messages, assistant text and thinking blocks, tool calls formatted for reading, tool results capped, and frontmatter with `source`, `session_id`, `project`, `date`, `messages`.
 
+Central-history exports accept agent-history schema v1 snapshots unchanged. For
+schema v2, they publish only sessions in the archive's canonical
+`publication_eligible_sessions` view, so lifecycle-excluded sessions contribute
+zero records to future builds without weakening present-version freshness or
+generation safety checks.
+
+This phase is logical suppression, not physical erasure. It does not remove raw
+blobs, mirrors, restic snapshots, native logs, or records in already-published
+remote generations.
+
 ### Communications
 
 Dense, link-rich communications. Today that's X.  A curated handle list fetched via the X API, filtered to originals + self-reply threads + quote-tweets (skips retweets and replies to other users), rendered one thread per markdown file.

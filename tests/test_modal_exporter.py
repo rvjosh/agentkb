@@ -237,6 +237,9 @@ def test_central_history_selects_latest_present_version_and_deduplicates_observa
     connection = sqlite3.connect(database)
     connection.executescript(
         """
+        CREATE TABLE schema_meta (
+          key TEXT PRIMARY KEY, value TEXT NOT NULL
+        );
         CREATE TABLE transcripts (
           id INTEGER PRIMARY KEY, source TEXT, native_session_id TEXT, created_at TEXT
         );
@@ -248,6 +251,7 @@ def test_central_history_selects_latest_present_version_and_deduplicates_observa
         CREATE TABLE observations (
           id INTEGER PRIMARY KEY, version_sha256 TEXT, present_at_last_scan INTEGER
         );
+        INSERT INTO schema_meta VALUES ('schema_version', '1');
         """
     )
     session_id = "11111111-2222-3333-4444-555555555555"
@@ -308,3 +312,42 @@ def test_central_history_selects_latest_present_version_and_deduplicates_observa
     assert records[0][1]["file"] == (
         f"agent-history-central/codex/{session_id}.md"
     )
+
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE lifecycle_exclusions (
+          source TEXT NOT NULL,
+          native_session_id TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(source, native_session_id)
+        );
+        CREATE VIEW publication_eligible_sessions AS
+        SELECT t.id, t.source, t.native_session_id, t.created_at
+        FROM transcripts t
+        WHERE NOT EXISTS (
+          SELECT 1 FROM lifecycle_exclusions x
+          WHERE x.source = t.source
+            AND x.native_session_id = t.native_session_id
+        );
+        UPDATE schema_meta SET value = '2' WHERE key = 'schema_version';
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO lifecycle_exclusions(
+          source, native_session_id, reason, actor, created_at
+        ) VALUES ('codex', ?, 'privacy request', 'test-actor', '2026-07-26')
+        """,
+        (session_id,),
+    )
+    connection.commit()
+    connection.close()
+    subprocess.run(
+        ["zstd", "-q", "-f", "-o", str(backup / "index.sqlite3.zst"), str(database)],
+        check=True,
+    )
+
+    assert list(exporter._history_records(backup)) == []
