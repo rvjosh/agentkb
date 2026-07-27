@@ -93,8 +93,11 @@ source JSONL
 
 The readable markdown keeps user messages, assistant text and thinking blocks, tool calls formatted for reading, tool results capped, and frontmatter with `source`, `session_id`, `project`, `date`, `messages`.
 
-Central-history exports accept agent-history schema v1 snapshots unchanged. For
-schema v2 and v3, they publish only sessions in the archive's canonical
+Central-history exports require the private schema-1 `current.json` generation
+pointer and validate its selected content-addressed database and provenance
+catalog, including compressed/catalog hashes and the exact decompressed SQLite
+hash. There is no fixed-name fallback. Agent-history schema v1 snapshots remain
+readable; for schemas v2, v3, and v4, exports publish only sessions in the canonical
 `publication_eligible_sessions` view, so lifecycle-excluded sessions contribute
 zero records to future builds. Schema v3 also supports archives where physically
 erased transcript, version, and event rows are gone while lifecycle tombstones

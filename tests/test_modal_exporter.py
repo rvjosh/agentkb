@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -300,10 +301,7 @@ def test_central_history_selects_latest_present_version_and_deduplicates_observa
     )
     connection.commit()
     connection.close()
-    subprocess.run(
-        ["zstd", "-q", "-f", "-o", str(backup / "index.sqlite3.zst"), str(database)],
-        check=True,
-    )
+    publish_history_generation(backup, database)
 
     records = list(exporter._history_records(backup))
     assert len(records) == 1
@@ -345,10 +343,7 @@ def test_central_history_selects_latest_present_version_and_deduplicates_observa
     )
     connection.commit()
     connection.close()
-    subprocess.run(
-        ["zstd", "-q", "-f", "-o", str(backup / "index.sqlite3.zst"), str(database)],
-        check=True,
-    )
+    publish_history_generation(backup, database)
 
     assert list(exporter._history_records(backup)) == []
 
@@ -429,10 +424,7 @@ def test_schema_v3_excludes_tombstoned_and_physically_erased_sessions_only(
     )
     connection.commit()
     connection.close()
-    subprocess.run(
-        ["zstd", "-q", "-f", "-o", str(backup / "index.sqlite3.zst"), str(database)],
-        check=True,
-    )
+    publish_history_generation(backup, database)
 
     records = list(exporter._history_records(backup))
     assert [session for session, _ in records] == ["codex/unrelated-session"]
@@ -444,7 +436,7 @@ def test_schema_v3_excludes_tombstoned_and_physically_erased_sessions_only(
     )
 
 
-@pytest.mark.parametrize("schema_version", [0, 4, 999])
+@pytest.mark.parametrize("schema_version", [0, 5, 999])
 def test_central_history_rejects_unknown_or_newer_schema(tmp_path, schema_version):
     backup = tmp_path / f"backup-{schema_version}"
     backup.mkdir()
@@ -457,9 +449,80 @@ def test_central_history_rejects_unknown_or_newer_schema(tmp_path, schema_versio
             "INSERT INTO schema_meta VALUES ('schema_version', ?)",
             (str(schema_version),),
         )
-    subprocess.run(
-        ["zstd", "-q", "-o", str(backup / "index.sqlite3.zst"), str(database)],
-        check=True,
-    )
+    publish_history_generation(backup, database)
     with pytest.raises(ValueError, match="unsupported"):
         list(exporter._history_records(backup))
+
+
+def publish_history_generation(backup, database):
+    backup.mkdir(parents=True, exist_ok=True)
+    os.chmod(backup, 0o700)
+    database_bytes = database.read_bytes()
+    database_sha = hashlib.sha256(database_bytes).hexdigest()
+    compressed = backup / f"history-index-{database_sha}.sqlite3.zst"
+    subprocess.run(
+        ["zstd", "-q", "-f", "-o", str(compressed), str(database)],
+        check=True,
+    )
+    os.chmod(compressed, 0o600)
+    catalog_bytes = b""
+    catalog_sha = hashlib.sha256(catalog_bytes).hexdigest()
+    catalog = backup / f"provenance-catalog-{catalog_sha}.jsonl"
+    catalog.write_bytes(catalog_bytes)
+    os.chmod(catalog, 0o600)
+    pointer = {
+        "schemaVersion": 1,
+        "archiveSchema": 4,
+        "catalogSchema": 1,
+        "database": {
+            "filename": compressed.name,
+            "sha256": database_sha,
+            "compressedSha256": hashlib.sha256(compressed.read_bytes()).hexdigest(),
+            "bytes": len(database_bytes),
+            "compressedBytes": compressed.stat().st_size,
+            "logicalFingerprint": "c" * 64,
+        },
+        "catalog": {
+            "filename": catalog.name,
+            "sha256": catalog_sha,
+            "bytes": 0,
+            "recordCount": 0,
+            "fingerprint": "d" * 64,
+        },
+        "sqliteRuntimeVersion": sqlite3.sqlite_version,
+        "referencedBlobCount": 0,
+        "verifiedBlobCount": 0,
+        "verifiedBytes": 0,
+        "knownParserProvenanceCount": 0,
+        "legacyParserProvenanceCount": 0,
+        "integrityCheck": "ok",
+        "foreignKeyCheck": "ok",
+    }
+    current = backup / "current.json"
+    current.write_text(json.dumps(pointer, sort_keys=True, separators=(",", ":")) + "\n")
+    os.chmod(current, 0o600)
+
+
+def test_history_generation_requires_pointer_and_validates_catalog(tmp_path):
+    backup = tmp_path / "backup-generation"
+    backup.mkdir(mode=0o700)
+    fixed = backup / "index.sqlite3.zst"
+    fixed.write_bytes(b"legacy")
+    os.chmod(fixed, 0o600)
+    with pytest.raises(FileNotFoundError):
+        exporter._load_history_pointer(backup)
+
+    database = tmp_path / "generation.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_meta VALUES ('schema_version', '4')")
+    fixed.unlink()
+    publish_history_generation(backup, database)
+    pointer = json.loads((backup / "current.json").read_text())
+    catalog = backup / pointer["catalog"]["filename"]
+    catalog.write_bytes(b"tampered")
+    os.chmod(catalog, 0o600)
+    with pytest.raises(ValueError, match="size mismatch|catalog hash mismatch"):
+        exporter._load_history_pointer(backup)

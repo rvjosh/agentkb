@@ -418,6 +418,16 @@ export async function refreshProduction(
         "--source-plan-json",
         JSON.stringify(options.sourcePlan),
       );
+      const planSources = (
+        typeof options.sourcePlan === "object" &&
+        options.sourcePlan !== null &&
+        Array.isArray((options.sourcePlan as { sources?: unknown }).sources)
+      )
+        ? (options.sourcePlan as { sources: Array<{ source_id?: unknown }> }).sources
+        : [];
+      if (planSources.some((source) => source.source_id === "agent-history-central")) {
+        exporterArgs.push("--archive-lock-held");
+      }
     }
     await checkedCommand(dependencies, exporterArgs, 60 * 60_000);
     const corpusPath = join(localDirectory, "corpus.jsonl");

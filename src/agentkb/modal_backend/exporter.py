@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
+import os
+import re
 import sqlite3
+import stat
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -30,6 +35,8 @@ SOURCES_SCHEMA = 1
 CORPUS_FILENAME = "corpus.jsonl"
 MANIFEST_FILENAME = "manifest.json"
 COLLECTIONS = ("chats", "wiki", "wiki:source")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ARCHIVE_POINTER_SCHEMA = 1
 
 
 def _sanitize_json_strings(value: Any) -> Any:
@@ -289,10 +296,154 @@ def _iter_history_messages(
         yield role, text, timestamp
 
 
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _private_file(path: Path, expected_size: int | None = None) -> os.stat_result:
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise ValueError(f"central history private file is unsafe: {path.name}")
+    if expected_size is not None and metadata.st_size != expected_size:
+        raise ValueError(f"central history file size mismatch: {path.name}")
+    return metadata
+
+
+def _exact_keys(value: dict[str, Any], expected: set[str]) -> bool:
+    return set(value) == expected
+
+
+def _generation_file(root: Path, filename: Any) -> Path:
+    if not isinstance(filename, str) or Path(filename).name != filename:
+        raise ValueError("central history generation filename must be a basename")
+    path = root / filename
+    if path.parent != root:
+        raise ValueError("central history generation filename escaped its root")
+    return path
+
+
+def _load_history_pointer(backup_root: Path) -> tuple[dict[str, Any], Path, Path]:
+    requested_metadata = backup_root.lstat()
+    if stat.S_ISLNK(requested_metadata.st_mode):
+        raise ValueError("central history mirror root must not be a symlink")
+    root = backup_root.resolve()
+    root_metadata = root.lstat()
+    if (
+        stat.S_ISLNK(root_metadata.st_mode)
+        or not stat.S_ISDIR(root_metadata.st_mode)
+        or stat.S_IMODE(root_metadata.st_mode) != 0o700
+    ):
+        raise ValueError("central history mirror root must be a private 0700 directory")
+    current = root / "current.json"
+    metadata = _private_file(current)
+    if metadata.st_size <= 0 or metadata.st_size > 64 * 1024:
+        raise ValueError("central history current.json size is invalid")
+    pointer = json.loads(current.read_text(encoding="utf-8"))
+    if not isinstance(pointer, dict) or not _exact_keys(
+        pointer,
+        {
+            "schemaVersion",
+            "archiveSchema",
+            "catalogSchema",
+            "database",
+            "catalog",
+            "sqliteRuntimeVersion",
+            "referencedBlobCount",
+            "verifiedBlobCount",
+            "verifiedBytes",
+            "knownParserProvenanceCount",
+            "legacyParserProvenanceCount",
+            "integrityCheck",
+            "foreignKeyCheck",
+        },
+    ):
+        raise ValueError("central history current.json has unknown or missing fields")
+    database = pointer.get("database")
+    catalog = pointer.get("catalog")
+    counts = (
+        "referencedBlobCount",
+        "verifiedBlobCount",
+        "verifiedBytes",
+        "knownParserProvenanceCount",
+        "legacyParserProvenanceCount",
+    )
+    if (
+        pointer.get("schemaVersion") != ARCHIVE_POINTER_SCHEMA
+        or pointer.get("archiveSchema") != 4
+        or pointer.get("catalogSchema") != 1
+        or not isinstance(pointer.get("sqliteRuntimeVersion"), str)
+        or any(
+            not isinstance(pointer.get(name), int) or pointer[name] < 0
+            for name in counts
+        )
+        or pointer["verifiedBlobCount"] != pointer["referencedBlobCount"]
+        or pointer.get("integrityCheck") != "ok"
+        or pointer.get("foreignKeyCheck") != "ok"
+        or not isinstance(database, dict)
+        or not isinstance(catalog, dict)
+    ):
+        raise ValueError("central history current.json schema is invalid")
+    if not _exact_keys(
+        database,
+        {
+            "filename",
+            "sha256",
+            "compressedSha256",
+            "bytes",
+            "compressedBytes",
+            "logicalFingerprint",
+        },
+    ) or not _exact_keys(
+        catalog,
+        {"filename", "sha256", "bytes", "recordCount", "fingerprint"},
+    ):
+        raise ValueError("central history generation entries are invalid")
+    database_sha = database.get("sha256")
+    catalog_sha = catalog.get("sha256")
+    if (
+        not isinstance(database_sha, str)
+        or SHA256_PATTERN.fullmatch(database_sha) is None
+        or database.get("filename") != f"history-index-{database_sha}.sqlite3.zst"
+        or not isinstance(database.get("compressedSha256"), str)
+        or SHA256_PATTERN.fullmatch(database["compressedSha256"]) is None
+        or not isinstance(database.get("bytes"), int)
+        or database["bytes"] <= 0
+        or not isinstance(database.get("compressedBytes"), int)
+        or database["compressedBytes"] <= 0
+        or not isinstance(database.get("logicalFingerprint"), str)
+        or SHA256_PATTERN.fullmatch(database["logicalFingerprint"]) is None
+        or not isinstance(catalog_sha, str)
+        or SHA256_PATTERN.fullmatch(catalog_sha) is None
+        or catalog.get("filename") != f"provenance-catalog-{catalog_sha}.jsonl"
+        or not isinstance(catalog.get("bytes"), int)
+        or catalog["bytes"] < 0
+        or not isinstance(catalog.get("recordCount"), int)
+        or catalog["recordCount"] < 0
+        or not isinstance(catalog.get("fingerprint"), str)
+        or SHA256_PATTERN.fullmatch(catalog["fingerprint"]) is None
+    ):
+        raise ValueError("central history generation identity is invalid")
+    compressed = _generation_file(root, database["filename"])
+    catalog_path = _generation_file(root, catalog["filename"])
+    _private_file(compressed, database["compressedBytes"])
+    _private_file(catalog_path, catalog["bytes"])
+    if _hash_file(compressed) != database["compressedSha256"]:
+        raise ValueError("central history compressed database hash mismatch")
+    if _hash_file(catalog_path) != catalog_sha:
+        raise ValueError("central history catalog hash mismatch")
+    return pointer, compressed, catalog_path
+
+
 def _decompress_history_index(backup_root: Path) -> Path:
-    compressed = backup_root / "index.sqlite3.zst"
-    if not compressed.is_file():
-        raise FileNotFoundError(f"central history snapshot is missing: {compressed}")
+    pointer, compressed, _ = _load_history_pointer(backup_root)
     handle = tempfile.NamedTemporaryFile(
         prefix="agentkb-history-", suffix=".sqlite3", delete=False
     )
@@ -310,6 +461,10 @@ def _decompress_history_index(backup_root: Path) -> Path:
                 "cannot decompress central history snapshot: "
                 + result.stderr.decode("utf-8", errors="replace").strip()
             )
+        os.chmod(temporary, 0o600)
+        _private_file(temporary, pointer["database"]["bytes"])
+        if _hash_file(temporary) != pointer["database"]["sha256"]:
+            raise ValueError("central history uncompressed database hash mismatch")
         return temporary
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -345,13 +500,13 @@ def _history_records(
                 raise ValueError(
                     "central history snapshot has a malformed schema version"
                 ) from exc
-        if schema_version not in {1, 2, 3}:
+        if schema_version not in {1, 2, 3, 4}:
             raise ValueError(
                 f"unsupported central history schema version: {schema_version}"
             )
         sessions_relation = (
             "publication_eligible_sessions"
-            if schema_version in {2, 3}
+            if schema_version in {2, 3, 4}
             else "transcripts"
         )
         rows = connection.execute(
@@ -391,14 +546,12 @@ def _history_records(
         for row in rows:
             source = str(row["source"])
             session_id = str(row["native_session_id"])
-            blob = backup_root / str(row["blob_path"])
-            if not blob.is_file():
-                compressed = Path(f"{blob}.zst")
-                if not compressed.is_file():
-                    raise FileNotFoundError(
-                        f"central history blob is missing: {blob}"
-                    )
-                blob = compressed
+            relative_blob = Path(str(row["blob_path"]))
+            if relative_blob.is_absolute() or ".." in relative_blob.parts:
+                raise ValueError("central history blob path escaped its root")
+            blob = (backup_root / f"{relative_blob}.zst").resolve()
+            if not blob.is_relative_to(backup_root.resolve()) or not blob.is_file():
+                raise FileNotFoundError(f"central history blob is missing: {blob}")
             stored_file = f"agent-history-central/{source}/{session_id}.md"
             session_key = f"{source}/{session_id}"
             for ordinal, (role, text, timestamp) in enumerate(
@@ -437,6 +590,45 @@ def _history_records(
         database_path.unlink(missing_ok=True)
 
 
+@contextmanager
+def _archive_generation_lock(backup_root: Path, already_held: bool):
+    if already_held:
+        yield
+        return
+    lock_path = (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "agent-history-archive"
+        / "generation.lock"
+    )
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(lock_path.parent, 0o700)
+    acquired = False
+    for attempt in range(120):
+        result = subprocess.run(
+            ["/usr/bin/shlock", "-f", str(lock_path), "-p", str(os.getpid())],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if result.returncode == 0:
+            acquired = True
+            break
+        if attempt < 119:
+            time.sleep(1)
+    if not acquired:
+        raise TimeoutError("central history generation remained locked")
+    try:
+        yield
+    finally:
+        try:
+            if lock_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                lock_path.unlink(missing_ok=True)
+        except FileNotFoundError:
+            pass
+
+
 def _validate_source_plan(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema") != SOURCES_SCHEMA:
         raise ValueError("source plan must be a schema-1 object")
@@ -462,6 +654,7 @@ def export_corpus(
     output_dir: Path,
     exported_at: datetime | None = None,
     source_plan: dict[str, Any] | None = None,
+    archive_lock_held: bool = False,
 ) -> dict[str, Any]:
     """Export the default wiki, wiki:source, and chats corpus."""
     generation_id = validate_generation_id(generation_id)
@@ -588,22 +781,23 @@ def export_corpus(
         history_source = source_receipts.get("agent-history-central")
         if history_source is not None:
             backup_root = Path(history_source["root"]).expanduser().resolve()
-            for session_key, record in _history_records(backup_root):
-                canonical_id = record["canonical_id"]
-                if canonical_id in canonical_ids:
-                    raise ValueError(f"duplicate canonical_id: {canonical_id}")
-                canonical_ids.add(canonical_id)
-                line = (_canonical_json(record) + "\n").encode("utf-8")
-                corpus.write(line)
-                digest.update(line)
-                corpus_count += 1
-                collection_document_counts["chats"] += 1
-                history_source["exported_document_count"] += 1
-                source_files["agent-history-central"].add(session_key)
-                collection_key = f"agent-history-central:{session_key}"
-                if collection_key not in collection_files["chats"]:
-                    collection_files["chats"].add(collection_key)
-                    source_file_counts["chats"] += 1
+            with _archive_generation_lock(backup_root, archive_lock_held):
+                for session_key, record in _history_records(backup_root):
+                    canonical_id = record["canonical_id"]
+                    if canonical_id in canonical_ids:
+                        raise ValueError(f"duplicate canonical_id: {canonical_id}")
+                    canonical_ids.add(canonical_id)
+                    line = (_canonical_json(record) + "\n").encode("utf-8")
+                    corpus.write(line)
+                    digest.update(line)
+                    corpus_count += 1
+                    collection_document_counts["chats"] += 1
+                    history_source["exported_document_count"] += 1
+                    source_files["agent-history-central"].add(session_key)
+                    collection_key = f"agent-history-central:{session_key}"
+                    if collection_key not in collection_files["chats"]:
+                        collection_files["chats"].add(collection_key)
+                        source_file_counts["chats"] += 1
 
     for source_id, receipt in source_receipts.items():
         receipt["source_file_count"] = len(source_files[source_id]) or receipt.get(
@@ -658,6 +852,7 @@ def main() -> None:
     parser.add_argument("--chats-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--source-plan-json")
+    parser.add_argument("--archive-lock-held", action="store_true")
     args = parser.parse_args()
     source_plan = (
         json.loads(args.source_plan_json) if args.source_plan_json else None
@@ -668,6 +863,7 @@ def main() -> None:
         chats_root=args.chats_root,
         output_dir=args.output_dir,
         source_plan=source_plan,
+        archive_lock_held=args.archive_lock_held,
     )
     print(_canonical_json(result))
 

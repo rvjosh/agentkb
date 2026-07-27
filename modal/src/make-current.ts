@@ -1,5 +1,8 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { createReadStream } from "node:fs";
 import {
+  chmod,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -34,6 +37,8 @@ export const DEFAULT_COLLAPSE_RATIO = 0.5;
 export const DEFAULT_OUTER_TIMEOUT_MS = 5 * 60 * 60_000;
 export const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60_000;
 export const BACKUP_FRESHNESS_MINUTES = 90;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const ARCHIVE_POINTER_SCHEMA = 1;
 
 export interface SourceExportRoot {
   path: string;
@@ -97,6 +102,13 @@ export interface LockHandle {
   release(): Promise<void>;
 }
 
+export interface HistoryGenerationIdentity {
+  databaseSha256: string;
+  catalogSha256: string;
+  databaseFilename: string;
+  catalogFilename: string;
+}
+
 export interface MakeCurrentDependencies {
   home: string;
   now(): Date;
@@ -112,6 +124,8 @@ export interface MakeCurrentDependencies {
     options?: { include?: (path: string) => boolean },
   ): Promise<{ count: number; newest: string | null }>;
   acquireLock(root: string, runId: string, startedAt: string): Promise<LockHandle | null>;
+  acquireArchiveLock(home: string): Promise<LockHandle | null>;
+  validateHistoryGeneration(root: string): Promise<HistoryGenerationIdentity>;
   readJson(path: string): Promise<unknown | null>;
   writeJsonAtomic(path: string, value: unknown): Promise<void>;
   makeTempDirectory(prefix: string): Promise<string>;
@@ -383,6 +397,218 @@ export async function runBoundedCommand(
     : { exitCode, stdout, stderr };
 }
 
+interface ArchivePointer {
+  schemaVersion: 1;
+  archiveSchema: 4;
+  catalogSchema: 1;
+  database: {
+    filename: string;
+    sha256: string;
+    compressedSha256: string;
+    bytes: number;
+    compressedBytes: number;
+    logicalFingerprint: string;
+  };
+  catalog: {
+    filename: string;
+    sha256: string;
+    bytes: number;
+    recordCount: number;
+    fingerprint: string;
+  };
+  sqliteRuntimeVersion: string;
+  referencedBlobCount: number;
+  verifiedBlobCount: number;
+  verifiedBytes: number;
+  knownParserProvenanceCount: number;
+  legacyParserProvenanceCount: number;
+  integrityCheck: "ok";
+  foreignKeyCheck: "ok";
+}
+
+function exactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  const expected = [...keys].sort();
+  return Object.keys(value).sort().every((key, index, actual) =>
+    actual.length === expected.length && key === expected[index]
+  );
+}
+
+function nonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function parseArchivePointer(value: unknown): ArchivePointer {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("central history current.json must contain an object");
+  }
+  const item = value as Record<string, unknown>;
+  if (!exactKeys(item, [
+    "schemaVersion", "archiveSchema", "catalogSchema", "database", "catalog",
+    "sqliteRuntimeVersion", "referencedBlobCount", "verifiedBlobCount", "verifiedBytes",
+    "knownParserProvenanceCount", "legacyParserProvenanceCount", "integrityCheck",
+    "foreignKeyCheck",
+  ])) throw new TypeError("central history current.json has unknown or missing fields");
+  const database = item.database;
+  const catalog = item.catalog;
+  if (
+    item.schemaVersion !== ARCHIVE_POINTER_SCHEMA ||
+    item.archiveSchema !== 4 ||
+    item.catalogSchema !== 1 ||
+    typeof item.sqliteRuntimeVersion !== "string" ||
+    !/^\d+\.\d+\.\d+$/.test(item.sqliteRuntimeVersion) ||
+    !nonnegativeInteger(item.referencedBlobCount) ||
+    !nonnegativeInteger(item.verifiedBlobCount) ||
+    item.verifiedBlobCount !== item.referencedBlobCount ||
+    !nonnegativeInteger(item.verifiedBytes) ||
+    !nonnegativeInteger(item.knownParserProvenanceCount) ||
+    !nonnegativeInteger(item.legacyParserProvenanceCount) ||
+    item.integrityCheck !== "ok" ||
+    item.foreignKeyCheck !== "ok" ||
+    typeof database !== "object" || database === null || Array.isArray(database) ||
+    typeof catalog !== "object" || catalog === null || Array.isArray(catalog)
+  ) throw new TypeError("central history current.json schema is invalid");
+  const db = database as Record<string, unknown>;
+  const cat = catalog as Record<string, unknown>;
+  if (
+    !exactKeys(db, ["filename", "sha256", "compressedSha256", "bytes", "compressedBytes", "logicalFingerprint"]) ||
+    typeof db.sha256 !== "string" || !SHA256_PATTERN.test(db.sha256) ||
+    db.filename !== `history-index-${db.sha256}.sqlite3.zst` ||
+    typeof db.compressedSha256 !== "string" || !SHA256_PATTERN.test(db.compressedSha256) ||
+    !nonnegativeInteger(db.bytes) || db.bytes === 0 ||
+    !nonnegativeInteger(db.compressedBytes) || db.compressedBytes === 0 ||
+    typeof db.logicalFingerprint !== "string" || !SHA256_PATTERN.test(db.logicalFingerprint)
+  ) throw new TypeError("central history database generation is invalid");
+  if (
+    !exactKeys(cat, ["filename", "sha256", "bytes", "recordCount", "fingerprint"]) ||
+    typeof cat.sha256 !== "string" || !SHA256_PATTERN.test(cat.sha256) ||
+    cat.filename !== `provenance-catalog-${cat.sha256}.jsonl` ||
+    !nonnegativeInteger(cat.bytes) ||
+    !nonnegativeInteger(cat.recordCount) ||
+    typeof cat.fingerprint !== "string" || !SHA256_PATTERN.test(cat.fingerprint)
+  ) throw new TypeError("central history catalog generation is invalid");
+  return item as unknown as ArchivePointer;
+}
+
+async function hashFile(path: string): Promise<string> {
+  const digest = createHash("sha256");
+  await new Promise<void>((resolvePromise, reject) => {
+    const stream = createReadStream(path);
+    stream.on("data", (chunk) => digest.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolvePromise);
+  });
+  return digest.digest("hex");
+}
+
+async function privateFile(path: string, size?: number): Promise<void> {
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isFile() || (metadata.mode & 0o777) !== 0o600) {
+    throw new TypeError(`central history private file is unsafe: ${basename(path)}`);
+  }
+  if (size !== undefined && metadata.size !== size) {
+    throw new TypeError(`central history file size mismatch: ${basename(path)}`);
+  }
+}
+
+export async function validateHistoryGeneration(
+  root: string,
+): Promise<HistoryGenerationIdentity> {
+  const requestedRootMetadata = await lstat(root);
+  if (requestedRootMetadata.isSymbolicLink()) {
+    throw new TypeError("central history mirror root must not be a symlink");
+  }
+  const resolvedRoot = resolve(root);
+  const rootMetadata = await lstat(resolvedRoot);
+  if (
+    rootMetadata.isSymbolicLink() ||
+    !rootMetadata.isDirectory() ||
+    (rootMetadata.mode & 0o777) !== 0o700
+  ) throw new TypeError("central history mirror root must be a private 0700 directory");
+  const currentPath = join(resolvedRoot, "current.json");
+  await privateFile(currentPath);
+  const currentMetadata = await lstat(currentPath);
+  if (currentMetadata.size <= 0 || currentMetadata.size > 64 * 1024) {
+    throw new TypeError("central history current.json size is invalid");
+  }
+  const pointer = parseArchivePointer(JSON.parse(await readFile(currentPath, "utf-8")));
+  const databasePath = resolve(resolvedRoot, pointer.database.filename);
+  const catalogPath = resolve(resolvedRoot, pointer.catalog.filename);
+  if (
+    resolve(databasePath, "..") !== resolvedRoot ||
+    resolve(catalogPath, "..") !== resolvedRoot
+  ) throw new TypeError("central history generation filename escaped its root");
+  await privateFile(databasePath, pointer.database.compressedBytes);
+  await privateFile(catalogPath, pointer.catalog.bytes);
+  if (await hashFile(databasePath) !== pointer.database.compressedSha256) {
+    throw new TypeError("central history compressed database hash mismatch");
+  }
+  if (await hashFile(catalogPath) !== pointer.catalog.sha256) {
+    throw new TypeError("central history catalog hash mismatch");
+  }
+  const temporary = join(
+    tmpdir(),
+    `agentkb-history-validate-${process.pid}-${randomBytes(6).toString("hex")}.sqlite3`,
+  );
+  try {
+    const result = await runBoundedCommand(
+      ["/opt/homebrew/bin/zstd", "-d", "-q", "-f", databasePath, "-o", temporary],
+      { timeoutMs: 10 * 60_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`cannot decompress central history database: ${result.stderr.trim()}`);
+    }
+    await chmod(temporary, 0o600);
+    await privateFile(temporary, pointer.database.bytes);
+    if (await hashFile(temporary) !== pointer.database.sha256) {
+      throw new TypeError("central history uncompressed database hash mismatch");
+    }
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  return {
+    databaseSha256: pointer.database.sha256,
+    catalogSha256: pointer.catalog.sha256,
+    databaseFilename: pointer.database.filename,
+    catalogFilename: pointer.catalog.filename,
+  };
+}
+
+async function defaultAcquireArchiveLock(home: string): Promise<LockHandle | null> {
+  const path = join(
+    home,
+    "Library",
+    "Application Support",
+    "agent-history-archive",
+    "generation.lock",
+  );
+  const parent = resolve(path, "..");
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  await chmod(parent, 0o700);
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const result = await runBoundedCommand(
+      ["/usr/bin/shlock", "-f", path, "-p", String(process.pid)],
+      { timeoutMs: 5_000 },
+    );
+    if (result.exitCode === 0) {
+      return {
+        release: async () => {
+          try {
+            if ((await readFile(path, "utf-8")).trim() === String(process.pid)) {
+              await rm(path, { force: true });
+            }
+          } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+              throw error;
+            }
+          }
+        },
+      };
+    }
+    if (attempt < 119) await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
+  }
+  return null;
+}
+
 async function defaultScan(
   roots: string[],
   options: { include?: (path: string) => boolean } = {},
@@ -497,6 +723,8 @@ export const defaultMakeCurrentDependencies: MakeCurrentDependencies = {
   runCommand: runBoundedCommand,
   scan: defaultScan,
   acquireLock: defaultAcquireLock,
+  acquireArchiveLock: defaultAcquireArchiveLock,
+  validateHistoryGeneration,
   readJson: defaultReadJson,
   writeJsonAtomic: defaultWriteJsonAtomic,
   makeTempDirectory: async (prefix) => {
@@ -663,6 +891,7 @@ export async function makeCurrent(
   const sourceReceipts: PlannedSource[] = [];
   let registry: SourceRegistry | null = null;
   let tempRoot: string | null = null;
+  let archiveLock: LockHandle | null = null;
   try {
     registry = await resolveSourceRegistry(wikiPath, dependencies);
     const deadline = started.getTime() + registry.outerTimeoutMs;
@@ -693,11 +922,20 @@ export async function makeCurrent(
     const syncResult = await dependencies.runCommand(syncArgs, {
       timeoutMs: 20 * 60_000,
     });
+    archiveLock = await dependencies.acquireArchiveLock(dependencies.home);
+    if (!archiveLock) {
+      throw new Error("central history generation remained locked beyond the bounded wait");
+    }
     const statusResult = await dependencies.runCommand(statusArgs, {
       timeoutMs: 2 * 60_000,
     });
+    const historyGeneration = await dependencies.validateHistoryGeneration(
+      registry.backupRoot,
+    );
     const historyScan = await dependencies.scan([
-      join(registry.backupRoot, "index.sqlite3.zst"),
+      join(registry.backupRoot, "current.json"),
+      join(registry.backupRoot, historyGeneration.databaseFilename),
+      join(registry.backupRoot, historyGeneration.catalogFilename),
       join(registry.backupRoot, "raw"),
     ]);
     const historyWarning =
@@ -707,7 +945,7 @@ export async function makeCurrent(
         ? commandError(statusArgs, statusResult)
         : null;
     const historyError =
-      historyScan.count < 2 ? "verified central history backup is empty" : null;
+      historyScan.count < 4 ? "verified central history generation is empty" : null;
     sourceReceipts.push(
       receiptFor(
         historyEntry,
@@ -852,6 +1090,7 @@ export async function makeCurrent(
     return { exitCode: 1, receipt };
   } finally {
     if (tempRoot) await dependencies.removeLocal(tempRoot);
+    if (archiveLock) await archiveLock.release();
     await lock.release();
   }
 }

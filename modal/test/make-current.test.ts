@@ -46,6 +46,7 @@ function dependencies(options: {
   readwiseCount?: number;
   historySyncExit?: number;
   lock?: boolean;
+  archiveLock?: boolean;
 } = {}) {
   const commands: string[][] = [];
   const writes = new Map<string, unknown>();
@@ -78,11 +79,21 @@ function dependencies(options: {
     scan: async (roots) => ({
       count: roots.some((root) => root.includes("readwise-tweets"))
         ? options.readwiseCount ?? 3
+        : roots.some((root) => root.includes("current.json"))
+        ? 4
         : 3,
       newest: "2026-07-26T11:00:00Z",
     }),
     acquireLock: async () =>
       options.lock === false ? null : { release: async () => {} },
+    acquireArchiveLock: async () =>
+      options.archiveLock === false ? null : { release: async () => {} },
+    validateHistoryGeneration: async () => ({
+      databaseSha256: "a".repeat(64),
+      catalogSha256: "b".repeat(64),
+      databaseFilename: `history-index-${"a".repeat(64)}.sqlite3.zst`,
+      catalogFilename: `provenance-catalog-${"b".repeat(64)}.jsonl`,
+    }),
     readJson: async (path) => writes.get(path) ?? null,
     writeJsonAtomic: async (path, value) => {
       writes.set(path, value);
@@ -182,6 +193,14 @@ test("history sync failure uses the verified nonempty backup as degraded fallbac
       (source) => source.source_id === "agent-history-central",
     )?.state,
   ).toBe("fallback");
+});
+
+test("archive-lock overlap refuses to read or publish a moving generation", async () => {
+  const state = dependencies({ archiveLock: false });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.published).toBeFalse();
+  expect(result.receipt.error).toContain("remained locked");
 });
 
 test("upstream failure with an empty fallback refuses publication", async () => {

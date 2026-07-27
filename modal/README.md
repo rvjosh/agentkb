@@ -19,10 +19,13 @@ agentkb-modal make-current --json
 
 The same command runs daily on Air at 04:20 local through
 `com.beckett.agentkb-refresh.air`. It first runs and verifies
-`mini-admin-to-air-backup`, then uses only the verified compressed snapshot
-under `~/Library/Application Support/agent-history-backup/mini-admin` for
-central coding-agent transcripts. It never fans out to live Air, Mini-admin, or
-Mini-agent transcript roots.
+`mini-admin-to-air-backup`, acquires the shared Air archive-generation lock,
+then requires and validates `current.json` plus its selected immutable database
+and provenance catalog under
+`~/Library/Application Support/agent-history-backup/mini-admin`. The lock stays
+held through the Python export and generation build so erasure cleanup cannot
+race the read. There is no `index.sqlite3.zst` fallback, and the job never fans
+out to live Air, Mini-admin, or Mini-agent transcript roots.
 
 Source modes are `upstream`, `projection`, `human-dependent`, and
 `disabled-costly`. Readwise Tweets and GitHub Stars are the only wiki upstream

@@ -127,3 +127,11 @@ Running the focused AgentKB Modal CLI tests in the task worktree → Bun could n
 ## 2026-07-27T13:42:37Z · unknown · joshuaizzard · agentkb:. · 019fa3cf-9a52-7580-9c1a-3564e64973b8
 
 Checking repository parity before development → repo-sync status requires an explicit --target, but that requirement was easy to miss on the first call; surface the current target or a clearer hint.
+
+## 2026-07-27T15:07:12Z · unknown · joshuaizzard · agentkb:. · 019fa40f-4d1d-7e93-8cd2-e391cf44c913
+
+Verifying the AgentKB exporter changes → `uv run ruff` could not spawn because ruff is not installed in the project environment; the repository has a .ruff_cache but no declared ruff dev dependency or runnable lint recipe.
+
+## 2026-07-27T15:17:23Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019fa045-a4c0-7ce3-b55f-adb3c405308f
+
+Verifying the transcript-generation migration → ran AgentKB `bun run typecheck` from the repository root, where no script exists; the declared TypeScript package and command live under modal/.
