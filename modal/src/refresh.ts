@@ -25,10 +25,14 @@ const COLLECTIONS = new Set(["wiki", "wiki:source", "chats"]);
 export interface PathRoots {
   wikiRoot: string;
   chatsReadableRoot: string;
+  externalRoots: Record<string, string>;
 }
 
 export interface RefreshOptions {
   wikiPath?: string;
+  chatsRoot?: string;
+  sourcePlan?: unknown;
+  validateBeforeStaging?: (manifest: GenerationManifest) => void;
 }
 
 export interface CommandResult {
@@ -43,12 +47,13 @@ export interface RefreshDependencies {
   removeLocal(path: string): Promise<void>;
   readText(path: string): Promise<string>;
   streamBytes(path: string): AsyncIterable<Uint8Array>;
-  runCommand(args: string[]): Promise<CommandResult>;
+  runCommand(args: string[], timeoutMs?: number): Promise<CommandResult>;
   resolveRoots(wikiPath?: string): Promise<PathRoots>;
 }
 
 export interface RefreshResult extends BuildResult {
   staged_removed: true;
+  manifest: GenerationManifest;
 }
 
 function expandHome(path: string, home: string): string {
@@ -79,17 +84,66 @@ export async function resolvePathRoots(
   }
   const configuredWiki = config.wiki_path;
   const configuredChats = config.chats_path;
+  const sourcePaths = config.source_paths;
   if (configuredWiki !== undefined && typeof configuredWiki !== "string") {
     throw new TypeError("wiki_path must be a string");
   }
   if (configuredChats !== undefined && typeof configuredChats !== "string") {
     throw new TypeError("chats_path must be a string");
   }
+  if (
+    sourcePaths !== undefined &&
+    (typeof sourcePaths !== "object" ||
+      sourcePaths === null ||
+      Array.isArray(sourcePaths))
+  ) {
+    throw new TypeError("source_paths must be an object");
+  }
+  const configuredSources = (sourcePaths ?? {}) as Record<string, unknown>;
+  const externalDefaults: Record<string, string> = {
+    "readwise-tweets/": join(
+      home,
+      "home",
+      "llm-wiki-generated",
+      "readwise-tweets",
+      "qmd-docs",
+    ),
+    "youtube-saved/": join(
+      home,
+      "home",
+      "llm-wiki-generated",
+      "youtube-playlists",
+    ),
+    "historical-chat-exports/": join(
+      home,
+      "home",
+      "llm-wiki-generated",
+      "chat-exports",
+      "qmd-docs",
+    ),
+  };
+  const externalRoots = Object.fromEntries(
+    Object.entries(externalDefaults).map(([prefix, fallback]) => {
+      const sourceId = prefix.slice(0, -1);
+      const configured = configuredSources[sourceId];
+      if (
+        configured !== undefined &&
+        (typeof configured !== "string" || !configured)
+      ) {
+        throw new TypeError(`source_paths.${sourceId} must be a non-empty string`);
+      }
+      return [
+        prefix,
+        resolve(expandHome((configured as string | undefined) ?? fallback, home)),
+      ];
+    }),
+  );
   const wikiRoot = wikiOverride || configuredWiki || join(home, ".agentkb", "wiki");
   const chatsRoot = configuredChats || join(home, ".agentkb", "chats");
   return {
     wikiRoot: resolve(expandHome(wikiRoot, home)),
     chatsReadableRoot: resolve(expandHome(chatsRoot, home), "readable"),
+    externalRoots,
   };
 }
 
@@ -169,6 +223,7 @@ function validateExportManifest(
   value: unknown,
   generationId: string,
   corpus: CorpusValidation,
+  requireSourceMetadata = false,
 ): GenerationManifest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError("export manifest must be an object");
@@ -214,6 +269,27 @@ function validateExportManifest(
   if (manifest.corpus_count !== corpus.count) {
     throw new TypeError("export manifest corpus_count mismatch");
   }
+  if (requireSourceMetadata) {
+    if (!manifest.sources || !manifest.collection_counts) {
+      throw new TypeError(
+        "export manifest must include source receipts and collection counts",
+      );
+    }
+    for (const collection of ["wiki", "wiki:source", "chats"] as const) {
+      if (manifest.collection_counts[collection].documents < 1) {
+        throw new TypeError(`export collection ${collection} must be nonempty`);
+      }
+    }
+    const collectionTotal = Object.values(manifest.collection_counts).reduce(
+      (total, count) => total + count.documents,
+      0,
+    );
+    if (collectionTotal !== manifest.corpus_count) {
+      throw new TypeError(
+        "export collection document counts must sum to corpus_count",
+      );
+    }
+  }
   return manifest;
 }
 
@@ -255,13 +331,33 @@ function validateBuild(manifest: GenerationManifest, build: BuildResult): void {
   }
 }
 
-async function defaultRunCommand(args: string[]): Promise<CommandResult> {
+async function defaultRunCommand(
+  args: string[],
+  timeoutMs = 30 * 60_000,
+): Promise<CommandResult> {
   const process = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+  let timedOut = false;
+  let forceTimer: ReturnType<typeof setTimeout> | undefined;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    process.kill("SIGTERM");
+    forceTimer = setTimeout(() => process.kill("SIGKILL"), 1_000);
+  }, timeoutMs);
   const [exitCode, stdout, stderr] = await Promise.all([
     process.exited,
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),
-  ]);
+  ]).finally(() => {
+    clearTimeout(timer);
+    if (forceTimer !== undefined) clearTimeout(forceTimer);
+  });
+  if (timedOut) {
+    return {
+      exitCode: 124,
+      stdout,
+      stderr: `${stderr}${stderr && !stderr.endsWith("\n") ? "\n" : ""}timed out after ${timeoutMs}ms`,
+    };
+  }
   return { exitCode, stdout, stderr };
 }
 
@@ -278,8 +374,9 @@ export const defaultRefreshDependencies: RefreshDependencies = {
 async function checkedCommand(
   dependencies: RefreshDependencies,
   args: string[],
+  timeoutMs: number,
 ): Promise<CommandResult> {
-  const result = await dependencies.runCommand(args);
+  const result = await dependencies.runCommand(args, timeoutMs);
   if (result.exitCode !== 0) {
     throw new Error(
       `command failed (${args.join(" ")}): ${result.stderr.trim() || result.stdout.trim()}`,
@@ -298,10 +395,10 @@ export async function refreshProduction(
   const localDirectory = await dependencies.makeTempDirectory(
     "agentkb-modal-refresh-",
   );
-  const chatsRoot = resolve(roots.chatsReadableRoot, "..");
+  const chatsRoot = options.chatsRoot ?? resolve(roots.chatsReadableRoot, "..");
   const paths = generationPaths(generationId);
   try {
-    await checkedCommand(dependencies, [
+    const exporterArgs = [
       "uv",
       "run",
       "python",
@@ -315,7 +412,14 @@ export async function refreshProduction(
       chatsRoot,
       "--output-dir",
       localDirectory,
-    ]);
+    ];
+    if (options.sourcePlan !== undefined) {
+      exporterArgs.push(
+        "--source-plan-json",
+        JSON.stringify(options.sourcePlan),
+      );
+    }
+    await checkedCommand(dependencies, exporterArgs, 60 * 60_000);
     const corpusPath = join(localDirectory, "corpus.jsonl");
     const manifestPath = join(localDirectory, "manifest.json");
     const [corpus, manifestText] = await Promise.all([
@@ -327,7 +431,9 @@ export async function refreshProduction(
       manifestValue,
       generationId,
       corpus,
+      options.sourcePlan !== undefined,
     );
+    options.validateBeforeStaging?.(manifest);
 
     await checkedCommand(dependencies, [
       ...MODAL_CLI_PREFIX,
@@ -336,7 +442,7 @@ export async function refreshProduction(
       VOLUME_NAME,
       corpusPath,
       paths.stagedCorpus,
-    ]);
+    ], 30 * 60_000);
     await checkedCommand(dependencies, [
       ...MODAL_CLI_PREFIX,
       "volume",
@@ -344,7 +450,7 @@ export async function refreshProduction(
       VOLUME_NAME,
       manifestPath,
       paths.stagedManifest,
-    ]);
+    ], 10 * 60_000);
     const build = await client.build(generationId);
     validateBuild(manifest, build);
     await checkedCommand(dependencies, [
@@ -354,8 +460,8 @@ export async function refreshProduction(
       VOLUME_NAME,
       `staged/${generationId}`,
       "--recursive",
-    ]);
-    return { ...build, staged_removed: true };
+    ], 5 * 60_000);
+    return { ...build, staged_removed: true, manifest };
   } finally {
     await dependencies.removeLocal(localDirectory);
   }

@@ -147,6 +147,7 @@ function dependencies(
     resolveRoots: async () => ({
       wikiRoot: "/local/wiki root",
       chatsReadableRoot: "/local/chats/readable",
+      externalRoots: {},
     }),
   };
 }
@@ -239,6 +240,7 @@ test("refresh forwards the wiki override to injected root resolution", async () 
     return {
       wikiRoot: "/override/wiki",
       chatsReadableRoot: "/local/chats/readable",
+      externalRoots: {},
     };
   };
   await refreshProduction(
@@ -258,6 +260,14 @@ test("path roots use override, config, and portable fallbacks", async () => {
   expect(configured).toEqual({
     wikiRoot: "/home/tester/override wiki",
     chatsReadableRoot: "/home/tester/chat-data/readable",
+    externalRoots: {
+      "historical-chat-exports/":
+        "/home/tester/home/llm-wiki-generated/chat-exports/qmd-docs",
+      "readwise-tweets/":
+        "/home/tester/home/llm-wiki-generated/readwise-tweets/qmd-docs",
+      "youtube-saved/":
+        "/home/tester/home/llm-wiki-generated/youtube-playlists",
+    },
   });
   const fallback = await resolvePathRoots(
     undefined,
@@ -271,6 +281,14 @@ test("path roots use override, config, and portable fallbacks", async () => {
   expect(fallback).toEqual({
     wikiRoot: "/home/tester/.agentkb/wiki",
     chatsReadableRoot: "/home/tester/.agentkb/chats/readable",
+    externalRoots: {
+      "historical-chat-exports/":
+        "/home/tester/home/llm-wiki-generated/chat-exports/qmd-docs",
+      "readwise-tweets/":
+        "/home/tester/home/llm-wiki-generated/readwise-tweets/qmd-docs",
+      "youtube-saved/":
+        "/home/tester/home/llm-wiki-generated/youtube-playlists",
+    },
   });
 });
 

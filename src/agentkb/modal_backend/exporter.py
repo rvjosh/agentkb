@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sqlite3
+import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -16,20 +19,38 @@ from agentkb.chats.renderer import (
     migrate_sessions_layout,
 )
 from agentkb.encoder import DEFAULT_MODEL
-from agentkb.indexing import IndexSpec
+from agentkb.indexing import IndexSpec, list_markdown_files
 from agentkb.modal_backend.generations import validate_generation_id
 from agentkb.utils import chunk_markdown
 from agentkb.wiki.parser import WIKI_SPEC
 
 
 SCHEMA = 1
+SOURCES_SCHEMA = 1
 CORPUS_FILENAME = "corpus.jsonl"
 MANIFEST_FILENAME = "manifest.json"
+COLLECTIONS = ("chats", "wiki", "wiki:source")
+
+
+def _sanitize_json_strings(value: Any) -> Any:
+    """Escape lone surrogates without changing valid Unicode source text."""
+    if isinstance(value, str):
+        return value.encode("utf-8", errors="backslashreplace").decode("utf-8")
+    if isinstance(value, list):
+        return [_sanitize_json_strings(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_json_strings(item) for item in value)
+    if isinstance(value, dict):
+        return {
+            _sanitize_json_strings(key): _sanitize_json_strings(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(
-        value,
+        _sanitize_json_strings(value),
         ensure_ascii=False,
         allow_nan=False,
         separators=(",", ":"),
@@ -89,13 +110,19 @@ def _source_entries(
 
 
 def _records_for_entry(
-    root: Path, spec: IndexSpec, relative_file: str, entry: Any
+    root: Path,
+    spec: IndexSpec,
+    relative_file: str,
+    entry: Any,
+    *,
+    stored_prefix: str = "",
 ) -> Iterator[dict[str, Any]]:
     for chunk in chunk_markdown(entry.path, relative_to=root):
+        stored_file = f"{stored_prefix}{chunk['file']}"
         record: dict[str, Any] = {
             "collection": entry.collection,
             "content": spec.make_structured_text(chunk, entry),
-            "file": chunk["file"],
+            "file": stored_file,
             "line": chunk["line"],
             "name": chunk["title"],
             "raw_content": chunk["content"],
@@ -104,10 +131,296 @@ def _records_for_entry(
             "title": chunk["title"],
             "unit_type": "chunk",
         }
-        if record["file"] != relative_file:
+        if chunk["file"] != relative_file:
             raise ValueError("parser returned a non-canonical relative file path")
         record["canonical_id"] = _canonical_id(record)
         yield record
+
+
+def _markdown_records(
+    *,
+    root: Path,
+    collection: str,
+    stored_prefix: str,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    spec = CHAT_SPEC if collection == "chats" else WIKI_SPEC
+    entries = list_markdown_files(root, collection=collection)
+    for relative_file, entry in sorted(entries.items()):
+        for record in _records_for_entry(
+            root,
+            spec,
+            relative_file,
+            entry,
+            stored_prefix=stored_prefix,
+        ):
+            yield relative_file, record
+
+
+def _jsonl_records(
+    *,
+    root: Path,
+    collection: str,
+    stored_prefix: str,
+    include: set[str] | None = None,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    for path in sorted(root.rglob("*.jsonl")):
+        relative_file = path.relative_to(root).as_posix()
+        if include is not None and relative_file not in include:
+            continue
+        stored_file = f"{stored_prefix}{relative_file}"
+        with path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"invalid JSONL in {path} at line {line_number}"
+                    ) from exc
+                raw_content = json.dumps(
+                    value, ensure_ascii=False, indent=2, sort_keys=True
+                )
+                record = {
+                    "collection": collection,
+                    "content": (
+                        f"[{collection}] {relative_file} > item-{line_number}\n\n"
+                        f"{raw_content}"
+                    ),
+                    "file": stored_file,
+                    "line": line_number,
+                    "name": relative_file,
+                    "raw_content": raw_content,
+                    "section": f"item-{line_number}",
+                    "tags": [],
+                    "title": relative_file,
+                    "unit_type": "item",
+                }
+                record["canonical_id"] = _canonical_id(record)
+                yield relative_file, record
+
+
+def _extract_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    texts = []
+    for block in content:
+        if isinstance(block, str):
+            texts.append(block)
+        elif isinstance(block, dict) and block.get("type") in {
+            "text",
+            "input_text",
+            "output_text",
+            "summary_text",
+        }:
+            text = block.get("text", "")
+            if isinstance(text, str):
+                texts.append(text)
+    return "\n".join(texts).strip()
+
+
+def _iter_history_messages(
+    source: str, compressed_blob: Path, expected_sha256: str
+) -> Iterator[tuple[str, str, str]]:
+    process = subprocess.Popen(
+        ["zstd", "-dc", str(compressed_blob)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    digest = hashlib.sha256()
+    codex_messages: list[tuple[str, str, str, bool]] = []
+    saw_codex_event_user = False
+    try:
+        for raw_line in process.stdout:
+            digest.update(raw_line)
+            try:
+                obj = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            timestamp = str(obj.get("timestamp", ""))
+            if source == "claude":
+                role = obj.get("type")
+                if role not in {"user", "assistant"} or obj.get("isMeta"):
+                    continue
+                message = obj.get("message", {})
+                if not isinstance(message, dict):
+                    continue
+                text = _extract_text(message.get("content"))
+                if text:
+                    yield str(role), text, timestamp
+                continue
+
+            payload = obj.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+            if obj.get("type") == "event_msg" and payload.get("type") == "user_message":
+                text = payload.get("message", "")
+                if isinstance(text, str) and text.strip():
+                    saw_codex_event_user = True
+                    codex_messages.append(("user", text.strip(), timestamp, False))
+                continue
+            if obj.get("type") != "response_item" or payload.get("type") != "message":
+                continue
+            role = payload.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            text = _extract_text(payload.get("content"))
+            if text:
+                codex_messages.append(
+                    (str(role), text, timestamp, role == "user")
+                )
+    finally:
+        process.stdout.close()
+    stderr = process.stderr.read().decode("utf-8", errors="replace").strip()
+    return_code = process.wait()
+    if return_code != 0:
+        raise RuntimeError(f"cannot decompress {compressed_blob}: {stderr}")
+    if digest.hexdigest() != expected_sha256:
+        raise ValueError(f"history blob hash mismatch: {compressed_blob}")
+    for role, text, timestamp, fallback_user in codex_messages:
+        if fallback_user and saw_codex_event_user:
+            continue
+        yield role, text, timestamp
+
+
+def _decompress_history_index(backup_root: Path) -> Path:
+    compressed = backup_root / "index.sqlite3.zst"
+    if not compressed.is_file():
+        raise FileNotFoundError(f"central history snapshot is missing: {compressed}")
+    handle = tempfile.NamedTemporaryFile(
+        prefix="agentkb-history-", suffix=".sqlite3", delete=False
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            result = subprocess.run(
+                ["zstd", "-dc", str(compressed)],
+                stdout=handle,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "cannot decompress central history snapshot: "
+                + result.stderr.decode("utf-8", errors="replace").strip()
+            )
+        return temporary
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _history_records(
+    backup_root: Path,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    database_path = _decompress_history_index(backup_root)
+    try:
+        connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            WITH present_versions AS (
+                SELECT
+                    t.source,
+                    t.native_session_id,
+                    v.sha256,
+                    v.blob_path,
+                    v.title,
+                    v.cwd,
+                    v.start_time,
+                    v.end_time,
+                    v.created_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.source, t.native_session_id
+                        ORDER BY v.created_at DESC, v.sha256 DESC
+                    ) AS version_rank
+                FROM transcripts t
+                JOIN versions v ON v.transcript_id = t.id
+                WHERE v.parser_status = 'ok'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM observations o
+                      WHERE o.version_sha256 = v.sha256
+                        AND o.present_at_last_scan = 1
+                  )
+            )
+            SELECT *
+            FROM present_versions
+            WHERE version_rank = 1
+            ORDER BY source, native_session_id
+            """
+        ).fetchall()
+        connection.close()
+        for row in rows:
+            source = str(row["source"])
+            session_id = str(row["native_session_id"])
+            blob = backup_root / str(row["blob_path"])
+            if not blob.is_file():
+                compressed = Path(f"{blob}.zst")
+                if not compressed.is_file():
+                    raise FileNotFoundError(
+                        f"central history blob is missing: {blob}"
+                    )
+                blob = compressed
+            stored_file = f"agent-history-central/{source}/{session_id}.md"
+            session_key = f"{source}/{session_id}"
+            for ordinal, (role, text, timestamp) in enumerate(
+                _iter_history_messages(source, blob, str(row["sha256"])),
+                start=1,
+            ):
+                section = f"message-{ordinal:06d}"
+                metadata = [
+                    f"Source: {source}",
+                    f"Session: {session_id}",
+                    f"Role: {role}",
+                ]
+                if timestamp:
+                    metadata.append(f"Timestamp: {timestamp}")
+                if row["cwd"]:
+                    metadata.append(f"Working directory: {row['cwd']}")
+                record = {
+                    "collection": "chats",
+                    "content": (
+                        f"[chats] {session_id} > {section}\n"
+                        + "\n".join(metadata)
+                        + f"\n\n{text}"
+                    ),
+                    "file": stored_file,
+                    "line": ordinal,
+                    "name": session_id,
+                    "raw_content": text,
+                    "section": section,
+                    "tags": ["agent-history-central", source, role],
+                    "title": session_id,
+                    "unit_type": "message",
+                }
+                record["canonical_id"] = _canonical_id(record)
+                yield session_key, record
+    finally:
+        database_path.unlink(missing_ok=True)
+
+
+def _validate_source_plan(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("schema") != SOURCES_SCHEMA:
+        raise ValueError("source plan must be a schema-1 object")
+    sources = value.get("sources")
+    if not isinstance(sources, list):
+        raise ValueError("source plan sources must be a list")
+    ids: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict) or not isinstance(source.get("source_id"), str):
+            raise ValueError("source plan contains an invalid source")
+        source_id = source["source_id"]
+        if source_id in ids:
+            raise ValueError(f"duplicate source plan source_id: {source_id}")
+        ids.add(source_id)
+    return value
 
 
 def export_corpus(
@@ -117,20 +430,37 @@ def export_corpus(
     chats_root: Path,
     output_dir: Path,
     exported_at: datetime | None = None,
+    source_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Export the default wiki, wiki:source, and chats corpus."""
     generation_id = validate_generation_id(generation_id)
     output_dir = validate_output_directory(output_dir)
-    readable_root = prepare_chats(chats_root.expanduser().resolve())
+    validated_plan = (
+        _validate_source_plan(source_plan)
+        if source_plan is not None
+        else {"schema": SOURCES_SCHEMA, "sources": []}
+    )
+    readable_root = (
+        prepare_chats(chats_root.expanduser().resolve())
+        if validated_plan.get("include_local_chats", True)
+        else chats_root.expanduser().resolve() / "readable"
+    )
 
     corpus_path = output_dir / CORPUS_FILENAME
     digest = hashlib.sha256()
     corpus_count = 0
     canonical_ids: set[str] = set()
-    source_file_counts = {
-        "chats": 0,
-        "wiki": 0,
-        "wiki:source": 0,
+    source_file_counts = {collection: 0 for collection in COLLECTIONS}
+    collection_files: dict[str, set[str]] = {
+        collection: set() for collection in COLLECTIONS
+    }
+    collection_document_counts = {collection: 0 for collection in COLLECTIONS}
+    source_receipts = {
+        source["source_id"]: {**source, "exported_document_count": 0}
+        for source in validated_plan["sources"]
+    }
+    source_files: dict[str, set[str]] = {
+        source_id: set() for source_id in source_receipts
     }
     roots_and_specs = (
         (wiki_root.expanduser().resolve(), WIKI_SPEC),
@@ -150,9 +480,105 @@ def export_corpus(
                 corpus.write(line)
                 digest.update(line)
                 corpus_count += 1
+                collection_document_counts[collection] += 1
                 file_has_records = True
+                base_source_id = (
+                    "wiki-pages"
+                    if collection == "wiki"
+                    else "wiki-raw"
+                    if collection == "wiki:source"
+                    else "local-readable-chats"
+                )
+                if base_source_id in source_receipts:
+                    source_receipts[base_source_id]["exported_document_count"] += 1
+                    source_files[base_source_id].add(relative_file)
+                normalized = relative_file.replace("\\", "/")
+                represented = {
+                    "github-stars": (
+                        "github-star" in normalized
+                        or normalized == "wiki/note-github-starred-repositories.md"
+                    ),
+                    "reddit-saved": "reddit-saved" in normalized,
+                }
+                for source_id, matches in represented.items():
+                    if matches and source_id in source_receipts:
+                        source_receipts[source_id]["exported_document_count"] += 1
+                        source_files[source_id].add(relative_file)
             if file_has_records:
                 source_file_counts[collection] += 1
+                collection_files[collection].add(relative_file)
+
+        for source in validated_plan["sources"]:
+            source_id = source["source_id"]
+            for export_root in source.get("export_roots", []):
+                root = Path(export_root["path"]).expanduser().resolve()
+                collection = export_root["collection"]
+                prefix = export_root["prefix"]
+                kind = export_root.get("kind", "markdown")
+                iterator = (
+                    _markdown_records(
+                        root=root,
+                        collection=collection,
+                        stored_prefix=prefix,
+                    )
+                    if kind == "markdown"
+                    else _jsonl_records(
+                        root=root,
+                        collection=collection,
+                        stored_prefix=prefix,
+                        include=(
+                            set(export_root["include"])
+                            if export_root.get("include")
+                            else None
+                        ),
+                    )
+                )
+                for relative_file, record in iterator:
+                    canonical_id = record["canonical_id"]
+                    if canonical_id in canonical_ids:
+                        raise ValueError(f"duplicate canonical_id: {canonical_id}")
+                    canonical_ids.add(canonical_id)
+                    line = (_canonical_json(record) + "\n").encode("utf-8")
+                    corpus.write(line)
+                    digest.update(line)
+                    corpus_count += 1
+                    collection_document_counts[collection] += 1
+                    source_receipts[source_id]["exported_document_count"] += 1
+                    source_files[source_id].add(
+                        f"{export_root['path']}:{relative_file}"
+                    )
+                    collection_key = (
+                        f"{source_id}:{export_root['path']}:{relative_file}"
+                    )
+                    if collection_key not in collection_files[collection]:
+                        collection_files[collection].add(collection_key)
+                        source_file_counts[collection] += 1
+
+        history_source = source_receipts.get("agent-history-central")
+        if history_source is not None:
+            backup_root = Path(history_source["root"]).expanduser().resolve()
+            for session_key, record in _history_records(backup_root):
+                canonical_id = record["canonical_id"]
+                if canonical_id in canonical_ids:
+                    raise ValueError(f"duplicate canonical_id: {canonical_id}")
+                canonical_ids.add(canonical_id)
+                line = (_canonical_json(record) + "\n").encode("utf-8")
+                corpus.write(line)
+                digest.update(line)
+                corpus_count += 1
+                collection_document_counts["chats"] += 1
+                history_source["exported_document_count"] += 1
+                source_files["agent-history-central"].add(session_key)
+                collection_key = f"agent-history-central:{session_key}"
+                if collection_key not in collection_files["chats"]:
+                    collection_files["chats"].add(collection_key)
+                    source_file_counts["chats"] += 1
+
+    for source_id, receipt in source_receipts.items():
+        receipt["source_file_count"] = len(source_files[source_id]) or receipt.get(
+            "source_file_count", 0
+        )
+        receipt.pop("export_roots", None)
     if corpus_count == 0:
         raise ValueError("production corpus is empty")
 
@@ -165,6 +591,19 @@ def export_corpus(
         "corpus_count": corpus_count,
         "corpus_hash": corpus_hash,
         "source_file_counts": source_file_counts,
+        "collection_counts": {
+            collection: {
+                "documents": collection_document_counts[collection],
+                "files": source_file_counts[collection],
+            }
+            for collection in COLLECTIONS
+        },
+        "sources": {
+            "schema": SOURCES_SCHEMA,
+            "items": [
+                source_receipts[source_id] for source_id in sorted(source_receipts)
+            ],
+        },
         "exported_at": timestamp.astimezone(timezone.utc)
         .isoformat()
         .replace("+00:00", "Z"),
@@ -187,12 +626,17 @@ def main() -> None:
     parser.add_argument("--wiki-root", required=True, type=Path)
     parser.add_argument("--chats-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--source-plan-json")
     args = parser.parse_args()
+    source_plan = (
+        json.loads(args.source_plan_json) if args.source_plan_json else None
+    )
     result = export_corpus(
         generation_id=args.generation_id,
         wiki_root=args.wiki_root,
         chats_root=args.chats_root,
         output_dir=args.output_dir,
+        source_plan=source_plan,
     )
     print(_canonical_json(result))
 

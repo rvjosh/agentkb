@@ -20,8 +20,50 @@ export interface GenerationManifest {
   model: string;
   corpus_count: number;
   corpus_hash: string;
+  source_file_counts?: Record<CorpusCollection, number>;
+  collection_counts?: Record<CorpusCollection, CollectionCount>;
+  sources?: SourcesManifest;
+  exported_at?: string;
   build?: BuildMetrics;
   validation?: IndexValidation;
+}
+
+export type CorpusCollection = "wiki" | "wiki:source" | "chats";
+
+export interface CollectionCount {
+  documents: number;
+  files: number;
+}
+
+export type SourceMode =
+  | "upstream"
+  | "projection"
+  | "human-dependent"
+  | "disabled-costly";
+
+export type SourceState = "fresh" | "fallback" | "stale" | "failed";
+
+export interface SourceReceipt {
+  source_id: string;
+  mode: SourceMode;
+  state: SourceState;
+  operation: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  root: string;
+  source_file_count: number;
+  exported_document_count: number;
+  newest_source_timestamp: string | null;
+  freshness_threshold_minutes: number | null;
+  age_minutes: number | null;
+  warning: string | null;
+  error: string | null;
+}
+
+export interface SourcesManifest {
+  schema: 1;
+  items: SourceReceipt[];
 }
 
 export interface IndexValidation {
@@ -430,6 +472,84 @@ function validateBuildMetrics(
   };
 }
 
+function nullableNumberAt(value: unknown, path: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    fail(path, "must be null or a non-negative finite number");
+  }
+  return value;
+}
+
+export function validateSourcesManifest(
+  value: unknown,
+  path = "sources",
+): SourcesManifest {
+  const record = objectAt(value, path);
+  if (!Array.isArray(record.items)) fail(`${path}.items`, "must be an array");
+  const ids = new Set<string>();
+  const modes = new Set<SourceMode>([
+    "upstream",
+    "projection",
+    "human-dependent",
+    "disabled-costly",
+  ]);
+  const states = new Set<SourceState>([
+    "fresh",
+    "fallback",
+    "stale",
+    "failed",
+  ]);
+  const items = record.items.map((item, index): SourceReceipt => {
+    const itemPath = `${path}.items[${index}]`;
+    const source = objectAt(item, itemPath);
+    const sourceId = stringAt(source.source_id, `${itemPath}.source_id`);
+    if (!sourceId || ids.has(sourceId)) {
+      fail(`${itemPath}.source_id`, "must be non-empty and unique");
+    }
+    ids.add(sourceId);
+    const mode = stringAt(source.mode, `${itemPath}.mode`) as SourceMode;
+    const state = stringAt(source.state, `${itemPath}.state`) as SourceState;
+    if (!modes.has(mode)) fail(`${itemPath}.mode`, "is unsupported");
+    if (!states.has(state)) fail(`${itemPath}.state`, "is unsupported");
+    return {
+      source_id: sourceId,
+      mode,
+      state,
+      operation: stringAt(source.operation, `${itemPath}.operation`),
+      started_at: stringAt(source.started_at, `${itemPath}.started_at`),
+      finished_at: stringAt(source.finished_at, `${itemPath}.finished_at`),
+      duration_ms: integerAt(source.duration_ms, `${itemPath}.duration_ms`),
+      root: stringAt(source.root, `${itemPath}.root`),
+      source_file_count: integerAt(
+        source.source_file_count,
+        `${itemPath}.source_file_count`,
+      ),
+      exported_document_count: integerAt(
+        source.exported_document_count,
+        `${itemPath}.exported_document_count`,
+      ),
+      newest_source_timestamp: nullableStringAt(
+        source.newest_source_timestamp,
+        `${itemPath}.newest_source_timestamp`,
+      ),
+      freshness_threshold_minutes: nullableNumberAt(
+        source.freshness_threshold_minutes,
+        `${itemPath}.freshness_threshold_minutes`,
+      ),
+      age_minutes: nullableNumberAt(
+        source.age_minutes,
+        `${itemPath}.age_minutes`,
+      ),
+      warning: nullableStringAt(source.warning, `${itemPath}.warning`),
+      error: nullableStringAt(source.error, `${itemPath}.error`),
+    };
+  });
+  return {
+    schema: schemaAt(record.schema, `${path}.schema`),
+    items,
+  };
+}
+
 export function validateManifest(
   value: unknown,
   path = "manifest",
@@ -447,6 +567,52 @@ export function validateManifest(
     corpus_count: integerAt(record.corpus_count, `${path}.corpus_count`, 1),
     corpus_hash: corpusHash,
   };
+  if (record.source_file_counts !== undefined) {
+    const sourceCounts = objectAt(
+      record.source_file_counts,
+      `${path}.source_file_counts`,
+    );
+    result.source_file_counts = {
+      wiki: integerAt(sourceCounts.wiki, `${path}.source_file_counts.wiki`),
+      "wiki:source": integerAt(
+        sourceCounts["wiki:source"],
+        `${path}.source_file_counts.wiki:source`,
+      ),
+      chats: integerAt(sourceCounts.chats, `${path}.source_file_counts.chats`),
+    };
+  }
+  if (record.collection_counts !== undefined) {
+    const counts = objectAt(record.collection_counts, `${path}.collection_counts`);
+    result.collection_counts = Object.fromEntries(
+      (["wiki", "wiki:source", "chats"] as CorpusCollection[]).map(
+        (collection) => {
+          const count = objectAt(
+            counts[collection],
+            `${path}.collection_counts.${collection}`,
+          );
+          return [
+            collection,
+            {
+              documents: integerAt(
+                count.documents,
+                `${path}.collection_counts.${collection}.documents`,
+              ),
+              files: integerAt(
+                count.files,
+                `${path}.collection_counts.${collection}.files`,
+              ),
+            },
+          ];
+        },
+      ),
+    ) as Record<CorpusCollection, CollectionCount>;
+  }
+  if (record.sources !== undefined) {
+    result.sources = validateSourcesManifest(record.sources, `${path}.sources`);
+  }
+  if (record.exported_at !== undefined) {
+    result.exported_at = stringAt(record.exported_at, `${path}.exported_at`);
+  }
   if (record.validation !== undefined) {
     result.validation = validateIndexValidation(
       record.validation,

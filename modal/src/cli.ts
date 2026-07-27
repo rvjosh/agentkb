@@ -10,6 +10,11 @@ import {
   reportCost,
 } from "./cost";
 import {
+  type MakeCurrentDependencies,
+  defaultMakeCurrentDependencies,
+  makeCurrent,
+} from "./make-current";
+import {
   type PathRoots,
   type RefreshDependencies,
   defaultRefreshDependencies,
@@ -31,6 +36,11 @@ export type ClientFactory = (roots?: PathRoots) => AgentKbClient;
 export type Output = (line: string) => void;
 
 export class UsageError extends TypeError {}
+export class CommandExitError extends Error {
+  constructor(readonly exitCode: 1 | 75) {
+    super(`command exited ${exitCode}`);
+  }
+}
 
 export interface CliSearchHit extends SearchHit {
   content_truncated: boolean;
@@ -42,6 +52,7 @@ export interface CliSearchResult extends Omit<SearchResult, "results"> {
 
 export interface CliDependencies {
   refresh: RefreshDependencies;
+  makeCurrent: MakeCurrentDependencies;
   resolveRoots(wikiPath?: string): Promise<PathRoots>;
   billingSpawn: BillingSpawn;
 }
@@ -56,6 +67,7 @@ export interface MainEnv {
 
 export const defaultCliDependencies: CliDependencies = {
   refresh: defaultRefreshDependencies,
+  makeCurrent: defaultMakeCurrentDependencies,
   resolveRoots: resolvePathRoots,
   billingSpawn: defaultBillingSpawn,
 };
@@ -69,6 +81,7 @@ export function usage(): string {
     "  agentkb-modal warm",
     "  agentkb-modal search --query <text> [--k <1-100>] [--full-content]",
     "  agentkb-modal refresh [--wiki-path <path>]",
+    "  agentkb-modal make-current [--wiki-path <path>] [--json]",
     "  agentkb-modal build --generation-id <id>",
     "  agentkb-modal prune-previous --generation-id <id> [--dry-run] [--force]",
     "  agentkb-modal cost [--days <1-7>]",
@@ -242,6 +255,24 @@ export async function runCli(
         );
         return;
       }
+      case "make-current": {
+        ensureKnownOptions(args, {
+          "--wiki-path": "value",
+          "--json": "boolean",
+        });
+        const wikiPath = option(args, "--wiki-path");
+        client = clientFactory();
+        const execution = await makeCurrent(
+          client,
+          wikiPath,
+          dependencies.makeCurrent,
+        );
+        writeJson(output, execution.receipt);
+        if (execution.exitCode !== 0) {
+          throw new CommandExitError(execution.exitCode);
+        }
+        return;
+      }
       case "build": {
         ensureKnownOptions(args, { "--generation-id": "value" });
         const generationId = validateUsage(() =>
@@ -281,6 +312,7 @@ export async function runMain(e: MainEnv): Promise<number> {
     await runCli(e.args, e.clientFactory, e.stdout, e.dependencies);
     return 0;
   } catch (error) {
+    if (error instanceof CommandExitError) return error.exitCode;
     e.stderr(`${error instanceof Error ? error.message : String(error)}\n`);
     return error instanceof UsageError ? 2 : 1;
   }

@@ -91,3 +91,11 @@ Preparing a matched AgentKB retrieval comparison → `bun run modal/src/cli.ts s
 ## 2026-07-25T16:41:39Z · unknown · joshuaizzard · agentkb:. · 019f9a27-3cc9-7c42-ae87-d2aed8c87ab1
 
 Starting the AgentKB bounded-output fix → the task says to follow each repository AGENTS.md, but agentkb has no AGENTS.md at its repository root; had to locate inherited/applicable instructions.
+
+## 2026-07-27T00:36:17Z · unknown · joshuaizzard · agentkb:. · 019fa0fe-d1d1-71b0-9854-32decf7d1bec
+
+Inspecting the compressed agent-history SQLite schema → a command with a trap that removed one mktemp file was rejected as unsafe; permit validated unique temp cleanup or make the rejection guidance mention leaving the temp directory for OS cleanup.
+
+## 2026-07-27T00:45:55Z · unknown · joshuaizzard · agentkb:. · 019fa0fe-d1d1-71b0-9854-32decf7d1bec
+
+Running the requested AgentKB Bun suite → `bun test modal/test` works from the repo root but silently matches no tests from `modal/`; keep verification commands anchored to their documented cwd or make the no-match exit nonzero in CI.

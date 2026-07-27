@@ -8,6 +8,7 @@ import {
   validateGenerationId,
   validatePrunePreviousResult,
   validateSearchRequest,
+  validateSourcesManifest,
   validateStatus,
   validateWarmResult,
 } from "../src/protocol";
@@ -72,6 +73,37 @@ test("validates search input bounds", () => {
   expect(() => validateSearchRequest({ query: " ", k: 10 })).toThrow();
   expect(() => validateSearchRequest({ query: "x", k: 0 })).toThrow();
   expect(() => validateSearchRequest({ query: "x", k: 101 })).toThrow();
+});
+
+test("validates versioned source receipts", () => {
+  const receipt = {
+    source_id: "wiki-pages",
+    mode: "projection" as const,
+    state: "fresh" as const,
+    operation: "validate /wiki/pages",
+    started_at: "2026-07-26T12:00:00Z",
+    finished_at: "2026-07-26T12:00:01Z",
+    duration_ms: 1000,
+    root: "/wiki/pages",
+    source_file_count: 4,
+    exported_document_count: 8,
+    newest_source_timestamp: "2026-07-26T11:00:00Z",
+    freshness_threshold_minutes: null,
+    age_minutes: 60,
+    warning: null,
+    error: null,
+  };
+  expect(validateSourcesManifest({ schema: 1, items: [receipt] }).items[0])
+    .toEqual(receipt);
+  expect(() =>
+    validateSourcesManifest({ schema: 1, items: [receipt, receipt] })
+  ).toThrow(/unique/);
+  expect(() =>
+    validateSourcesManifest({
+      schema: 1,
+      items: [{ ...receipt, source_file_count: -1 }],
+    })
+  ).toThrow(/source_file_count/);
 });
 
 test("validates warm startup timing breakdown", () => {

@@ -68,6 +68,7 @@ test("search reconstructs local paths solely from relative_path", async () => {
   const client = new ModalAgentKbClient(modal, {
     wikiRoot: "/Users/local/wiki",
     chatsReadableRoot: "/Users/local/chats/readable",
+    externalRoots: {},
   });
   const result = await client.search("test", 2);
   expect(result.results.map((hit) => hit.path)).toEqual([

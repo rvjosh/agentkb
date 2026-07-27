@@ -36,6 +36,89 @@ PLAID_KMEANS_SAMPLE_SIZE = 16_384
 PLAID_CREATE_COUNT = 1
 PLAID_PERMUTATION_ALGORITHM = "sha256-key-sort-v1"
 CORPUS_COLLECTIONS = {"wiki", "wiki:source", "chats"}
+SOURCE_MODES = {"upstream", "projection", "human-dependent", "disabled-costly"}
+SOURCE_STATES = {"fresh", "fallback", "stale", "failed"}
+
+
+def _validate_source_metadata(
+    manifest: dict[str, Any], expected_count: int | None = None
+) -> None:
+    collection_counts = manifest.get("collection_counts")
+    sources = manifest.get("sources")
+    if collection_counts is None and sources is None:
+        return
+    if not isinstance(collection_counts, dict) or set(collection_counts) != CORPUS_COLLECTIONS:
+        raise ValueError("manifest collection_counts is invalid")
+    for collection, counts in collection_counts.items():
+        if not isinstance(counts, dict) or set(counts) != {"documents", "files"}:
+            raise ValueError(f"manifest collection_counts.{collection} is invalid")
+        for field in ("documents", "files"):
+            value = counts[field]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(
+                    f"manifest collection_counts.{collection}.{field} is invalid"
+                )
+    if expected_count is not None and sum(
+        counts["documents"] for counts in collection_counts.values()
+    ) != expected_count:
+        raise ValueError("manifest collection document counts do not match corpus_count")
+    source_file_counts = manifest.get("source_file_counts")
+    if not isinstance(source_file_counts, dict) or set(source_file_counts) != CORPUS_COLLECTIONS:
+        raise ValueError("manifest source_file_counts is invalid")
+    for collection in CORPUS_COLLECTIONS:
+        if source_file_counts[collection] != collection_counts[collection]["files"]:
+            raise ValueError(
+                f"manifest file counts do not match for collection {collection}"
+            )
+    if (
+        not isinstance(sources, dict)
+        or sources.get("schema") != 1
+        or not isinstance(sources.get("items"), list)
+    ):
+        raise ValueError("manifest sources is invalid")
+    source_ids: set[str] = set()
+    for index, source in enumerate(sources["items"]):
+        if not isinstance(source, dict):
+            raise ValueError(f"manifest sources.items[{index}] is invalid")
+        source_id = source.get("source_id")
+        if not isinstance(source_id, str) or not source_id or source_id in source_ids:
+            raise ValueError(f"manifest sources.items[{index}].source_id is invalid")
+        source_ids.add(source_id)
+        if source.get("mode") not in SOURCE_MODES:
+            raise ValueError(f"manifest source {source_id} mode is invalid")
+        if source.get("state") not in SOURCE_STATES:
+            raise ValueError(f"manifest source {source_id} state is invalid")
+        for field in (
+            "operation",
+            "started_at",
+            "finished_at",
+            "root",
+        ):
+            if not isinstance(source.get(field), str):
+                raise ValueError(f"manifest source {source_id} {field} is invalid")
+        for field in (
+            "duration_ms",
+            "source_file_count",
+            "exported_document_count",
+        ):
+            value = source.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"manifest source {source_id} {field} is invalid")
+        for field in (
+            "newest_source_timestamp",
+            "warning",
+            "error",
+        ):
+            if source.get(field) is not None and not isinstance(source[field], str):
+                raise ValueError(f"manifest source {source_id} {field} is invalid")
+        for field in ("freshness_threshold_minutes", "age_minutes"):
+            value = source.get(field)
+            if value is not None and (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise ValueError(f"manifest source {source_id} {field} is invalid")
 
 
 def download_model() -> None:
@@ -119,6 +202,7 @@ def _load_staged(
             f"staged corpus count mismatch: expected {expected_count}, "
             f"got {actual_count}"
         )
+    _validate_source_metadata(manifest, actual_count)
     return corpus_path, manifest
 
 
@@ -546,6 +630,7 @@ def validate_search_build_certificate(
     corpus_hash = sha256(
         manifest.get("corpus_hash"), "generation manifest corpus_hash"
     )
+    _validate_source_metadata(manifest, corpus_count)
 
     build = manifest.get("build")
     if not isinstance(build, dict):

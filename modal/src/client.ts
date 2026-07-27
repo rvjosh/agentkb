@@ -97,6 +97,14 @@ export function localizeSearchResult(
   return {
     ...result,
     results: result.results.map((hit) => {
+      const external = Object.entries(roots.externalRoots)
+        .sort(([left], [right]) => right.length - left.length)
+        .find(([prefix]) => hit.relative_path.startsWith(prefix));
+      if (external) {
+        const [prefix, root] = external;
+        const path = localPath(root, hit.relative_path.slice(prefix.length));
+        return { ...hit, file: path, path, filename: basename(path) };
+      }
       const root =
         hit.collection === "chats"
           ? roots.chatsReadableRoot

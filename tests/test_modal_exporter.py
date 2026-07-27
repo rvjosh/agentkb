@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +14,16 @@ from agentkb.modal_backend import exporter
 
 
 GENERATION_ID = "g-20260725T123456Z-001122aabbcc"
+
+
+def test_canonical_json_escapes_lone_surrogates_but_preserves_valid_unicode():
+    encoded = exporter._canonical_json(
+        {"malformed": "\udcff", "valid": "naïve café"}
+    ).encode("utf-8")
+    assert json.loads(encoded) == {
+        "malformed": "\\udcff",
+        "valid": "naïve café",
+    }
 
 
 def _write_corpus(wiki_root: Path, chats_root: Path) -> None:
@@ -68,6 +80,12 @@ def test_export_is_canonical_model_free_and_has_exact_default_collections(
         "corpus_count": 3,
         "corpus_hash": hashlib.sha256(corpus_bytes).hexdigest(),
         "source_file_counts": {"chats": 1, "wiki": 1, "wiki:source": 1},
+        "collection_counts": {
+            "chats": {"documents": 1, "files": 1},
+            "wiki": {"documents": 1, "files": 1},
+            "wiki:source": {"documents": 1, "files": 1},
+        },
+        "sources": {"schema": 1, "items": []},
         "exported_at": "2026-07-25T12:00:00Z",
     }
     assert result["corpus_hash"] == manifest["corpus_hash"]
@@ -182,3 +200,111 @@ def test_prepare_chats_runs_all_sources_copy_and_render(tmp_path, monkeypatch):
         ("copy", sessions),
         ("render", tmp_path / "chats" / "readable"),
     ]
+
+
+def test_external_prefix_keeps_canonical_id_stable_across_content_change(tmp_path):
+    root = tmp_path / "external"
+    root.mkdir()
+    path = root / "item.jsonl"
+    path.write_text('{"body":"first"}\n')
+    first = list(
+        exporter._jsonl_records(
+            root=root,
+            collection="wiki:source",
+            stored_prefix="readwise-tweets/",
+        )
+    )[0][1]
+    path.write_text('{"body":"changed"}\n')
+    second = list(
+        exporter._jsonl_records(
+            root=root,
+            collection="wiki:source",
+            stored_prefix="readwise-tweets/",
+        )
+    )[0][1]
+    assert first["file"] == "readwise-tweets/item.jsonl"
+    assert first["canonical_id"] == second["canonical_id"]
+    assert first["raw_content"] != second["raw_content"]
+
+
+def test_central_history_selects_latest_present_version_and_deduplicates_observations(
+    tmp_path,
+):
+    backup = tmp_path / "backup"
+    raw_root = backup / "raw" / "codex"
+    raw_root.mkdir(parents=True)
+    database = tmp_path / "index.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE transcripts (
+          id INTEGER PRIMARY KEY, source TEXT, native_session_id TEXT, created_at TEXT
+        );
+        CREATE TABLE versions (
+          sha256 TEXT PRIMARY KEY, transcript_id INTEGER, blob_path TEXT,
+          parser_status TEXT, title TEXT, cwd TEXT, start_time TEXT, end_time TEXT,
+          created_at TEXT
+        );
+        CREATE TABLE observations (
+          id INTEGER PRIMARY KEY, version_sha256 TEXT, present_at_last_scan INTEGER
+        );
+        """
+    )
+    session_id = "11111111-2222-3333-4444-555555555555"
+
+    def add_version(name: str, text: str, created_at: str) -> str:
+        payload = (
+            json.dumps(
+                {
+                    "timestamp": "2026-07-26T12:00:00Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": text},
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+        sha = hashlib.sha256(payload).hexdigest()
+        relative = f"raw/codex/{name}.jsonl"
+        compressed = backup / f"{relative}.zst"
+        compressed.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["zstd", "-q", "-o", str(compressed)],
+            input=payload,
+            check=True,
+        )
+        connection.execute(
+            """
+            INSERT INTO versions(
+              sha256, transcript_id, blob_path, parser_status, title, cwd,
+              start_time, end_time, created_at
+            ) VALUES (?, 1, ?, 'ok', ?, '/repo', NULL, NULL, ?)
+            """,
+            (sha, relative, text, created_at),
+        )
+        return sha
+
+    connection.execute(
+        "INSERT INTO transcripts VALUES (1, 'codex', ?, '2026-07-26')",
+        (session_id,),
+    )
+    old_sha = add_version("old", "old text", "2026-07-26T10:00:00Z")
+    new_sha = add_version("new", "new text", "2026-07-26T11:00:00Z")
+    connection.executemany(
+        "INSERT INTO observations(version_sha256, present_at_last_scan) VALUES (?, 1)",
+        [(old_sha,), (new_sha,), (new_sha,)],
+    )
+    connection.commit()
+    connection.close()
+    subprocess.run(
+        ["zstd", "-q", "-f", "-o", str(backup / "index.sqlite3.zst"), str(database)],
+        check=True,
+    )
+
+    records = list(exporter._history_records(backup))
+    assert len(records) == 1
+    assert records[0][0] == f"codex/{session_id}"
+    assert records[0][1]["raw_content"] == "new text"
+    assert records[0][1]["file"] == (
+        f"agent-history-central/codex/{session_id}.md"
+    )

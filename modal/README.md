@@ -11,6 +11,34 @@ Use the stable `agentkb-modal` executable for normal production control-plane
 work. From a development checkout, `bun run modal/src/cli.ts ...` remains an
 equivalent repository-local fallback.
 
+The normal answer to “refresh AgentKB” or “make it current” is:
+
+```bash
+agentkb-modal make-current --json
+```
+
+The same command runs daily on Air at 04:20 local through
+`com.beckett.agentkb-refresh.air`. It first runs and verifies
+`mini-admin-to-air-backup`, then uses only the verified compressed snapshot
+under `~/Library/Application Support/agent-history-backup/mini-admin` for
+central coding-agent transcripts. It never fans out to live Air, Mini-admin, or
+Mini-agent transcript roots.
+
+Source modes are `upstream`, `projection`, `human-dependent`, and
+`disabled-costly`. Readwise Tweets and GitHub Stars are the only wiki upstream
+refreshes in the daily path. YouTube, historical chat exports, and Reddit are
+validated as durable projections; the job never runs browser-cookie, OAuth,
+X, or Gemini work. A failed safe upstream may publish only when its existing
+projection remains valid and nonempty; the source is marked `fallback` and the
+run is `degraded`.
+
+Atomic run receipts live under
+`~/Library/Application Support/agentkb-refresh`. `latest.json` records every
+run and `last-success.json` supplies the prior counts used by the conservative
+50% collapse guard (configurable with
+`make_current.collapse_ratio` in `~/.agentkb/config.json`). The PID-aware lock
+covers the complete run; live overlap exits 75 without source work.
+
 Deploy the private app with the pinned Modal Python client:
 
 ```bash
@@ -24,6 +52,9 @@ remove successful staging data:
 ```bash
 agentkb-modal refresh
 ```
+
+`refresh` remains the low-level compatibility command. It does not run source
+adapters, backup verification, receipts, or collapse checks.
 
 The refresh reads `wiki_path` and `chats_path` from
 `~/.agentkb/config.json`. If absent, the portable fallbacks are
@@ -148,8 +179,9 @@ current.json
 ```
 
 The staged schema-1 manifest records the generation ID, pinned AgentKB model,
-positive corpus count, SHA-256 over the exact canonical JSONL bytes, source file
-counts, and export timestamp. A generation is published only after SQLite,
+positive corpus count, SHA-256 over the exact canonical JSONL bytes, per-
+collection document/file counts, a versioned per-source receipt block, source
+file counts, and export timestamp. A generation is published only after SQLite,
 FTS, and both PLAID mapping counts agree and the copied generation validates.
 The L4 builder validates staged bytes in a streaming first pass, parses records
 lazily in a second pass, encodes exactly 256 documents at a time, and inserts
