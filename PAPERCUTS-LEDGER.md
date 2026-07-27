@@ -115,3 +115,7 @@ Repository parity preflight for agentkb → repo-sync status requires an explici
 ## 2026-07-27T05:42:20Z · unknown · joshuaizzard · agentkb:. · 019fa210-5088-7633-9e05-65ba25729770
 
 AgentKB verification → bare `python` and repo-local `ruff` were unavailable despite Python/uv project metadata, so verification required `uv run python` and `uvx ruff`; also `git status` rejects an absolute checkpoint path outside the repository, so checkpoint state must be inspected separately.
+
+## 2026-07-27T05:50:34Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019fa045-a4c0-7ce3-b55f-adb3c405308f
+
+Canarying the new AgentKB generation inventory on Modal → local tests rejected a symlinked volume root even though Modal presents its configured mount that way, and the first all-generation scan capped a real orphan metadata DB at 2 GiB; production-shaped mount fixtures and corpus-size fixtures should be part of control-plane tests.
