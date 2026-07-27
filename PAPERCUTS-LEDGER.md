@@ -119,3 +119,7 @@ AgentKB verification → bare `python` and repo-local `ruff` were unavailable de
 ## 2026-07-27T05:50:34Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019fa045-a4c0-7ce3-b55f-adb3c405308f
 
 Canarying the new AgentKB generation inventory on Modal → local tests rejected a symlinked volume root even though Modal presents its configured mount that way, and the first all-generation scan capped a real orphan metadata DB at 2 GiB; production-shaped mount fixtures and corpus-size fixtures should be part of control-plane tests.
+
+## 2026-07-27T10:18:03Z · unknown · joshuaizzard · agentkb:modal · 019fa313-0980-7df2-a5cb-2bc5e6cf4b77
+
+Running the focused AgentKB Modal CLI tests in the task worktree → Bun could not resolve the declared modal package because dependencies were not present; the task forbids installation, so a documented dependency-free test path or pre-provisioned worktree dependencies would help.

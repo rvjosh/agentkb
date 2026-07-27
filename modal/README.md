@@ -109,6 +109,17 @@ limit when needed:
 agentkb-modal search --query "retry logic" --k 10 --full-content
 ```
 
+Request metadata without stored content when only result identity and ranking
+fields are needed:
+
+```bash
+agentkb-modal search --query "retry logic" --k 10 --metadata-only
+```
+
+Metadata-only results retain the schema-1 envelope and backend result order,
+but omit both `content` and `content_truncated`. `--metadata-only` and
+`--full-content` cannot be combined.
+
 Generate an ID or trigger a build only for data that was staged separately:
 
 ```bash

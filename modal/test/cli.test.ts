@@ -312,6 +312,117 @@ test("--full-content preserves content and makes exactly one search call", async
   });
 });
 
+test("--metadata-only preserves the envelope, metadata, and backend order", async () => {
+  const result: SearchResult = {
+    schema: 1,
+    generation_id: ID,
+    query: "identities",
+    k: 2,
+    results: [
+      {
+        collection: "chats",
+        file: "/local/chats/second.md",
+        path: "/local/chats/second.md",
+        filename: "second.md",
+        relative_path: "second.md",
+        line: 20,
+        score: 0.2,
+        title: "Second",
+        tags: ["stable"],
+        content: "omitted payload",
+      },
+      {
+        collection: "wiki",
+        file: "/local/wiki/first.md",
+        path: "/local/wiki/first.md",
+        filename: "first.md",
+        relative_path: "first.md",
+        line: 10,
+        score: 0.9,
+        content: "also omitted",
+      },
+    ],
+  };
+  const client = new FakeClient();
+  client.search = async (query: string, k: number): Promise<SearchResult> => {
+    client.calls.push(["search", query, k]);
+    return result;
+  };
+  const output: string[] = [];
+
+  await runCli(
+    ["search", "--query", "identities", "--k", "2", "--metadata-only"],
+    () => client,
+    (line) => output.push(line),
+  );
+
+  expect(client.calls).toEqual([["search", "identities", 2]]);
+  const parsed = JSON.parse(output[0]!);
+  expect(parsed).toEqual({
+    schema: 1,
+    generation_id: ID,
+    query: "identities",
+    k: 2,
+    results: [
+      {
+        collection: "chats",
+        file: "/local/chats/second.md",
+        path: "/local/chats/second.md",
+        filename: "second.md",
+        relative_path: "second.md",
+        line: 20,
+        score: 0.2,
+        title: "Second",
+        tags: ["stable"],
+      },
+      {
+        collection: "wiki",
+        file: "/local/wiki/first.md",
+        path: "/local/wiki/first.md",
+        filename: "first.md",
+        relative_path: "first.md",
+        line: 10,
+        score: 0.9,
+      },
+    ],
+  });
+  expect(
+    parsed.results.map((hit: { relative_path: string }) => hit.relative_path),
+  ).toEqual(["second.md", "first.md"]);
+  for (const hit of parsed.results) {
+    expect(hit).not.toHaveProperty("content");
+    expect(hit).not.toHaveProperty("content_truncated");
+  }
+});
+
+test("search content flags conflict with usage status and flags stay strict", async () => {
+  for (const args of [
+    [
+      "search",
+      "--query",
+      "x",
+      "--metadata-only",
+      "--full-content",
+    ],
+    ["search", "--query", "x", "--metadata-only", "--metadata-only"],
+    ["search", "--query", "x", "--unknown"],
+  ]) {
+    const client = new FakeClient();
+    const errors: string[] = [];
+    expect(
+      await runMain({
+        args,
+        stdout: () => {},
+        stderr: (line) => errors.push(line),
+        clientFactory: () => client,
+        dependencies: defaultCliDependencies,
+      }),
+    ).toBe(2);
+    expect(client.calls).toEqual([]);
+    expect(errors.join("")).toContain("agentkb-modal --help");
+  }
+});
+
 test("routes an already-staged build", async () => {
   const client = new FakeClient();
   await runCli(["build", "--generation-id", ID], () => client, () => {});

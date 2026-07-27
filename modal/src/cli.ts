@@ -52,6 +52,12 @@ export interface CliSearchResult extends Omit<SearchResult, "results"> {
   results: CliSearchHit[];
 }
 
+export type CliMetadataSearchHit = Omit<SearchHit, "content">;
+
+export interface CliMetadataSearchResult extends Omit<SearchResult, "results"> {
+  results: CliMetadataSearchHit[];
+}
+
 export interface CliDependencies {
   refresh: RefreshDependencies;
   makeCurrent: MakeCurrentDependencies;
@@ -85,7 +91,7 @@ export function usage(): string {
     "  agentkb-modal delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb-modal delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb-modal warm",
-    "  agentkb-modal search --query <text> [--k <1-100>] [--full-content]",
+    "  agentkb-modal search --query <text> [--k <1-100>] [--full-content | --metadata-only]",
     "  agentkb-modal refresh [--wiki-path <path>]",
     "  agentkb-modal make-current [--wiki-path <path>] [--json]",
     "  agentkb-modal build --generation-id <id>",
@@ -95,7 +101,7 @@ export function usage(): string {
     "  agentkb-modal -h | --help",
     "  agentkb-modal --version",
     "",
-    "Search content is limited to 1,200 characters by default; --full-content widens it.",
+    "Search content is limited to 1,200 characters by default; --full-content widens it and --metadata-only omits it.",
     "Generation deletion is dry-run by default and requires --force to mutate.",
     "Cost reports are hourly metered usage for app description \"agentkb\".",
   ].join("\n");
@@ -172,6 +178,15 @@ export function shapeSearchResult(
         content_truncated: true,
       };
     }),
+  };
+}
+
+export function metadataOnlySearchResult(
+  result: SearchResult,
+): CliMetadataSearchResult {
+  return {
+    ...result,
+    results: result.results.map(({ content: _content, ...metadata }) => metadata),
   };
 }
 
@@ -286,7 +301,15 @@ export async function runCli(
           "--query": "value",
           "--k": "value",
           "--full-content": "boolean",
+          "--metadata-only": "boolean",
         });
+        const fullContent = args.includes("--full-content");
+        const metadataOnly = args.includes("--metadata-only");
+        if (fullContent && metadataOnly) {
+          throw usageError(
+            "--metadata-only cannot be combined with --full-content",
+          );
+        }
         const request = validateUsage(() =>
           validateSearchRequest({
             query: option(args, "--query"),
@@ -295,12 +318,12 @@ export async function runCli(
         );
         const roots = await dependencies.resolveRoots();
         client = clientFactory(roots);
+        const result = await client.search(request.query, request.k);
         writeJson(
           output,
-          shapeSearchResult(
-            await client.search(request.query, request.k),
-            args.includes("--full-content"),
-          ),
+          metadataOnly
+            ? metadataOnlySearchResult(result)
+            : shapeSearchResult(result, fullContent),
         );
         return;
       }
