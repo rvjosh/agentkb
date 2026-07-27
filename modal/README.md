@@ -145,6 +145,83 @@ generation directory, then commits and verifies the final state. Races or
 malformed pointer state fail closed. A final deletion-commit failure leaves the
 already-cleared pointer safe and does not attempt risky compensation.
 
+## Private generation erasure controls
+
+The SDK-only control plane also exposes a bounded inventory of every valid
+built and staged generation:
+
+```bash
+agentkb-modal generations --json
+```
+
+Each ID is classified as `current`, `previous`, `orphan`, or `staged`. Inventory
+rejects malformed IDs, symlinks, escaping paths, duplicate built/staged IDs,
+ambiguous pointers, invalid manifests/artifacts, and more than 1,000 combined
+entries. Results contain IDs, classifications, and counts only.
+
+Verify one exact central-history identity across every inventoried corpus:
+
+```bash
+agentkb-modal find-session \
+  --source codex \
+  --session-id <exact-session-id> \
+  --json
+```
+
+Built generations query immutable `metadata.db` with
+`documents.file = agent-history-central/<source>/<session-id>.md`. Staged
+generations stream `corpus.jsonl` and compare that exact `file` field. The scan
+does not use semantic search or return record content. SQLite and staged bytes,
+lines, and record counts are bounded; malformed or oversized staging is
+reported as a verification failure and fails closed.
+
+Deletion is dry-run by default:
+
+```bash
+agentkb-modal delete-generation \
+  --generation-id <id> \
+  --expected-current <current-id> \
+  --actor <actor> \
+  --reason <reason> \
+  --json
+
+agentkb-modal delete-staged \
+  --generation-id <id> \
+  --expected-current <current-id> \
+  --actor <actor> \
+  --reason <reason> \
+  --force \
+  --json
+```
+
+Add `--force` only after reviewing the dry run. `delete-generation` accepts
+only a `previous` or `orphan` built generation; `delete-staged` accepts only a
+staged generation. Both re-read and compare the current generation immediately
+before mutation and always refuse the active generation. Deleting the
+pointer-designated previous generation atomically clears and commits
+`previous_generation_id` before removing its exact directory. Orphan and staged
+deletion removes only the validated exact directory.
+
+Optional `--exact-session-key <source/session-id>` requires the target's exact
+session-presence verification to succeed with at least one exact match before
+deletion. A forced operation
+first appends and commits a content-free immutable intent at
+`deletion-receipts/<operation-uuid>/intent.json`; only then may it clear a
+previous pointer or remove the exact directory. Verified completion appends
+`complete.json` in that operation directory without rewriting the intent.
+Receipts include the exact target/type, expected current, original
+classification, actor/reason, optional exact-session key, timestamps, and
+a non-negative exact-match count. Bounded receipt scanning rejects malformed,
+duplicate, symlinked, mismatched, or over-limit operation state. Retries resume
+only one exact identity match and otherwise fail closed; an absent target with
+no exact intent or completion remains an error.
+
+These controls do not build or publish a replacement current generation. The
+higher-level erasure orchestrator must first publish a clean current generation,
+then verify and delete non-current copies. They do not remove source archives,
+native logs, mirrors, snapshots, or provider-held physical media, and make no
+provider or physical-media erasure guarantee.
+
 ## SessionStart warm primitive
 
 `modal/src/session-start.ts` reads hook JSON from stdin and submits a detached
@@ -224,5 +301,5 @@ These commands do not contact Modal or load a model:
 ```bash
 cd modal && bun test
 cd modal && bun run typecheck
-uv run --with pytest pytest tests/test_modal_exporter.py tests/test_modal_runtime.py tests/test_modal_generations.py tests/test_modal_adapter.py
+uv run --with pytest pytest tests/test_modal_exporter.py tests/test_modal_runtime.py tests/test_modal_generations.py tests/test_modal_erasure.py tests/test_modal_adapter.py
 ```

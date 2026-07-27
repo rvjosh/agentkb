@@ -94,14 +94,21 @@ source JSONL
 The readable markdown keeps user messages, assistant text and thinking blocks, tool calls formatted for reading, tool results capped, and frontmatter with `source`, `session_id`, `project`, `date`, `messages`.
 
 Central-history exports accept agent-history schema v1 snapshots unchanged. For
-schema v2, they publish only sessions in the archive's canonical
+schema v2 and v3, they publish only sessions in the archive's canonical
 `publication_eligible_sessions` view, so lifecycle-excluded sessions contribute
-zero records to future builds without weakening present-version freshness or
-generation safety checks.
+zero records to future builds. Schema v3 also supports archives where physically
+erased transcript, version, and event rows are gone while lifecycle tombstones
+remain independently retained. Unknown and newer schemas fail closed.
 
-This phase is logical suppression, not physical erasure. It does not remove raw
-blobs, mirrors, restic snapshots, native logs, or records in already-published
-remote generations.
+The private Modal control plane can inventory all bounded immutable and staged
+generations, verify an exact central-history session file identity in each
+corpus, and dry-run deletion of one exact non-current generation. Forced
+deletion requires an expected-current guard, actor, and reason; it writes a
+content-free receipt and never deletes the active generation. This is generation
+cleanup, not a provider or physical-media guarantee. It does not build or publish
+a clean current generation, remove native logs or backups, or prove erasure from
+provider infrastructure; the higher-level orchestrator must publish a clean
+current generation before removing older copies.
 
 ### Communications
 

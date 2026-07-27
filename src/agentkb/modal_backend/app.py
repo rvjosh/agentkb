@@ -6,6 +6,9 @@ from typing import Any
 import modal
 
 from agentkb.modal_backend.generations import (
+    delete_generation as delete_generation_primitive,
+    find_session_presence,
+    inventory_generations,
     prune_previous_generation,
     read_status,
     resolve_current,
@@ -128,6 +131,42 @@ class GenerationSearch:
 def status() -> dict[str, Any]:
     volume.reload()
     return read_status(VOLUME_ROOT)
+
+
+@app.function(image=router_image, volumes=volume_mount, timeout=60)
+def generations() -> dict[str, Any]:
+    volume.reload()
+    return inventory_generations(VOLUME_ROOT)
+
+
+@app.function(image=router_image, volumes=volume_mount, timeout=120)
+def find_session(source: str, session_id: str) -> dict[str, Any]:
+    volume.reload()
+    return find_session_presence(VOLUME_ROOT, source, session_id)
+
+
+@app.function(image=router_image, volumes=volume_mount, timeout=120)
+def delete_generation_exact(
+    generation_id: str,
+    target_type: str,
+    expected_current_generation_id: str,
+    force: bool,
+    actor: str,
+    reason: str,
+    exact_session_key: str | None = None,
+) -> dict[str, Any]:
+    return delete_generation_primitive(
+        VOLUME_ROOT,
+        generation_id,
+        target_type=target_type,
+        expected_current_generation_id=expected_current_generation_id,
+        force=force,
+        actor=actor,
+        reason=reason,
+        exact_session_key=exact_session_key,
+        commit=volume.commit,
+        reload=volume.reload,
+    )
 
 
 @app.function(image=router_image, volumes=volume_mount, timeout=60)

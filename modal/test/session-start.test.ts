@@ -11,6 +11,9 @@ import type {
 } from "../src/protocol";
 
 class HookClient implements AgentKbClient {
+  async generations(): Promise<never> { throw new Error("unused"); }
+  async findSession(): Promise<never> { throw new Error("unused"); }
+  async deleteGeneration(): Promise<never> { throw new Error("unused"); }
   warmed = 0;
   closed = 0;
   async status(): Promise<StatusResponse> { throw new Error("unused"); }

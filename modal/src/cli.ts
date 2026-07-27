@@ -27,6 +27,8 @@ import {
   type SearchHit,
   type SearchResult,
   validateGenerationId,
+  validateSessionId,
+  validateSessionSource,
   validateSearchRequest,
 } from "./protocol";
 
@@ -78,6 +80,10 @@ export function usage(): string {
     "",
     "Usage:",
     "  agentkb-modal status",
+    "  agentkb-modal generations --json",
+    "  agentkb-modal find-session --source <claude|codex> --session-id <id> --json",
+    "  agentkb-modal delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
+    "  agentkb-modal delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb-modal warm",
     "  agentkb-modal search --query <text> [--k <1-100>] [--full-content]",
     "  agentkb-modal refresh [--wiki-path <path>]",
@@ -90,7 +96,7 @@ export function usage(): string {
     "  agentkb-modal --version",
     "",
     "Search content is limited to 1,200 characters by default; --full-content widens it.",
-    "A real prune requires --force. --dry-run validates and plans without mutation.",
+    "Generation deletion is dry-run by default and requires --force to mutate.",
     "Cost reports are hourly metered usage for app description \"agentkb\".",
   ].join("\n");
 }
@@ -213,6 +219,63 @@ export async function runCli(
         client = clientFactory();
         writeJson(output, await client.status());
         return;
+      case "generations":
+        ensureKnownOptions(args, { "--json": "boolean" });
+        client = clientFactory();
+        writeJson(output, await client.generations());
+        return;
+      case "find-session": {
+        ensureKnownOptions(args, {
+          "--source": "value",
+          "--session-id": "value",
+          "--json": "boolean",
+        });
+        const source = validateUsage(() =>
+          validateSessionSource(option(args, "--source"))
+        );
+        const sessionId = validateUsage(() =>
+          validateSessionId(option(args, "--session-id"))
+        );
+        client = clientFactory();
+        writeJson(output, await client.findSession(source, sessionId));
+        return;
+      }
+      case "delete-generation":
+      case "delete-staged": {
+        ensureKnownOptions(args, {
+          "--generation-id": "value",
+          "--expected-current": "value",
+          "--actor": "value",
+          "--reason": "value",
+          "--exact-session-key": "value",
+          "--force": "boolean",
+          "--json": "boolean",
+        });
+        const generationId = validateUsage(() =>
+          validateGenerationId(option(args, "--generation-id"))
+        );
+        const expectedCurrent = validateUsage(() =>
+          validateGenerationId(option(args, "--expected-current"))
+        );
+        const actor = option(args, "--actor");
+        const reason = option(args, "--reason");
+        if (!actor?.trim()) throw usageError("--actor is required");
+        if (!reason?.trim()) throw usageError("--reason is required");
+        client = clientFactory();
+        writeJson(
+          output,
+          await client.deleteGeneration(
+            generationId,
+            command === "delete-staged" ? "staged" : "generation",
+            expectedCurrent,
+            args.includes("--force"),
+            actor,
+            reason,
+            option(args, "--exact-session-key"),
+          ),
+        );
+        return;
+      }
       case "warm":
         if (args.length) throw usageError("warm takes no arguments");
         client = clientFactory();

@@ -17,6 +17,7 @@ import type {
 } from "../src/protocol";
 
 const ID = "g-20260725T123456Z-001122aabbcc";
+const CURRENT_ID = "g-20260725T133456Z-112233aabbcc";
 
 function immutableCertificate(documentCount: number) {
   const tensor = { size_bytes: 1, dtype: "float16", shape: [1] };
@@ -55,6 +56,64 @@ class FakeClient implements AgentKbClient {
       published_at: null,
       current_manifest: null,
       previous_manifest: null,
+    };
+  }
+
+  async generations(): Promise<any> {
+    this.calls.push(["generations"]);
+    return {
+      schema: 1,
+      current_generation_id: ID,
+      previous_generation_id: null,
+      items: [{ generation_id: ID, type: "generation", classification: "current" }],
+      counts: { current: 1, previous: 0, orphan: 0, staged: 0 },
+    };
+  }
+
+  async findSession(source: "claude" | "codex", sessionId: string): Promise<any> {
+    this.calls.push(["findSession", source, sessionId]);
+    return {
+      schema: 1,
+      source,
+      session_id: sessionId,
+      canonical_file: `agent-history-central/${source}/${sessionId}.md`,
+      results: [],
+      total_exact_match_count: 0,
+      verification_failures: [],
+      verified: true,
+    };
+  }
+
+  async deleteGeneration(
+    generationId: string,
+    targetType: "generation" | "staged",
+    expectedCurrent: string,
+    force: boolean,
+    actor: string,
+    reason: string,
+    exactSessionKey?: string,
+  ): Promise<any> {
+    this.calls.push([
+      "deleteGeneration",
+      generationId,
+      targetType,
+      expectedCurrent,
+      force,
+      actor,
+      reason,
+      exactSessionKey,
+    ]);
+    return {
+      schema: 1,
+      dry_run: !force,
+      deleted: force,
+      idempotent: false,
+      target_id: generationId,
+      target_type: targetType,
+      classification: targetType === "staged" ? "staged" : "orphan",
+      current_generation_id: expectedCurrent,
+      operation_id: force ? "op" : null,
+      receipt: null,
     };
   }
 
@@ -296,6 +355,117 @@ test("prune rejects missing force and invalid IDs before a remote call", async (
     expect(runCli(args, () => client, () => {})).rejects.toThrow();
     expect(client.calls).toEqual([]);
     expect(client.closed).toBeFalse();
+  }
+});
+
+test("routes bounded generation inventory and exact-session verification", async () => {
+  const client = new FakeClient();
+  await runCli(["generations", "--json"], () => client, () => {});
+  await runCli(
+    [
+      "find-session",
+      "--source",
+      "codex",
+      "--session-id",
+      "session-1",
+      "--json",
+    ],
+    () => client,
+    () => {},
+  );
+  expect(client.calls).toEqual([
+    ["generations"],
+    ["findSession", "codex", "session-1"],
+  ]);
+});
+
+test("generation deletion is dry-run first and force is explicit", async () => {
+  const dryClient = new FakeClient();
+  await runCli(
+    [
+      "delete-generation",
+      "--generation-id",
+      ID,
+      "--expected-current",
+      CURRENT_ID,
+      "--actor",
+      "test",
+      "--reason",
+      "privacy",
+      "--json",
+    ],
+    () => dryClient,
+    () => {},
+  );
+  expect(dryClient.calls).toEqual([[
+    "deleteGeneration",
+    ID,
+    "generation",
+    CURRENT_ID,
+    false,
+    "test",
+    "privacy",
+    undefined,
+  ]]);
+
+  const forceClient = new FakeClient();
+  await runCli(
+    [
+      "delete-staged",
+      "--generation-id",
+      ID,
+      "--expected-current",
+      CURRENT_ID,
+      "--actor",
+      "test",
+      "--reason",
+      "privacy",
+      "--exact-session-key",
+      "codex/session-1",
+      "--force",
+    ],
+    () => forceClient,
+    () => {},
+  );
+  expect(forceClient.calls[0]).toEqual([
+    "deleteGeneration",
+    ID,
+    "staged",
+    CURRENT_ID,
+    true,
+    "test",
+    "privacy",
+    "codex/session-1",
+  ]);
+});
+
+test("generation erasure rejects incomplete or unsafe CLI input locally", async () => {
+  for (const args of [
+    ["find-session", "--source", "pi", "--session-id", "session-1"],
+    [
+      "delete-generation",
+      "--generation-id",
+      ID,
+      "--expected-current",
+      "../escape",
+      "--actor",
+      "test",
+      "--reason",
+      "privacy",
+    ],
+    [
+      "delete-generation",
+      "--generation-id",
+      ID,
+      "--expected-current",
+      CURRENT_ID,
+      "--reason",
+      "privacy",
+    ],
+  ]) {
+    const client = new FakeClient();
+    expect(runCli(args, () => client, () => {})).rejects.toThrow();
+    expect(client.calls).toEqual([]);
   }
 });
 

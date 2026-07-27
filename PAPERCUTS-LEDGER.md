@@ -99,3 +99,19 @@ Inspecting the compressed agent-history SQLite schema → a command with a trap 
 ## 2026-07-27T00:45:55Z · unknown · joshuaizzard · agentkb:. · 019fa0fe-d1d1-71b0-9854-32decf7d1bec
 
 Running the requested AgentKB Bun suite → `bun test modal/test` works from the repo root but silently matches no tests from `modal/`; keep verification commands anchored to their documented cwd or make the no-match exit nonzero in CI.
+
+## 2026-07-27T05:17:14Z · unknown · joshuaizzard · agentkb:. · 019fa200-fd8f-7721-90e0-f4add8056d91
+
+Checking AgentKB repository parity → `repo-sync status --repo agentkb --json` failed because status requires an explicit --target; help/output did not make a targetless inspection path obvious.
+
+## 2026-07-27T05:27:54Z · unknown · joshuaizzard · agentkb:. · 019fa200-fd8f-7721-90e0-f4add8056d91
+
+Verifying AgentKB erasure changes → the first focused pytest command ran from modal/ while naming root-relative tests, and a mechanical TypeScript import patch left one stray type line at EOF; both were caught immediately by pytest/typecheck and corrected.
+
+## 2026-07-27T05:33:46Z · unknown · joshuaizzard · agentkb:. · 019fa210-5088-7633-9e05-65ba25729770
+
+Repository parity preflight for agentkb → repo-sync status requires an explicit --target, which was not evident from the parity skill example/context; retried by inspecting the canonical manifest directly.
+
+## 2026-07-27T05:42:20Z · unknown · joshuaizzard · agentkb:. · 019fa210-5088-7633-9e05-65ba25729770
+
+AgentKB verification → bare `python` and repo-local `ruff` were unavailable despite Python/uv project metadata, so verification required `uv run python` and `uvx ruff`; also `git status` rejects an absolute checkpoint path outside the repository, so checkpoint state must be inspected separately.

@@ -351,3 +351,115 @@ def test_central_history_selects_latest_present_version_and_deduplicates_observa
     )
 
     assert list(exporter._history_records(backup)) == []
+
+
+def test_schema_v3_excludes_tombstoned_and_physically_erased_sessions_only(
+    tmp_path,
+):
+    backup = tmp_path / "backup-v3"
+    backup.mkdir()
+    database = tmp_path / "index-v3.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE transcripts (
+          id INTEGER PRIMARY KEY, source TEXT, native_session_id TEXT, created_at TEXT
+        );
+        CREATE TABLE versions (
+          sha256 TEXT PRIMARY KEY, transcript_id INTEGER, blob_path TEXT,
+          parser_status TEXT, title TEXT, cwd TEXT, start_time TEXT, end_time TEXT,
+          created_at TEXT
+        );
+        CREATE TABLE observations (
+          id INTEGER PRIMARY KEY, version_sha256 TEXT, present_at_last_scan INTEGER
+        );
+        CREATE TABLE lifecycle_tombstones (
+          source TEXT NOT NULL, native_session_id TEXT NOT NULL,
+          state TEXT NOT NULL, created_at TEXT NOT NULL,
+          PRIMARY KEY(source, native_session_id)
+        );
+        CREATE VIEW publication_eligible_sessions AS
+        SELECT t.id, t.source, t.native_session_id, t.created_at
+        FROM transcripts t
+        WHERE NOT EXISTS (
+          SELECT 1 FROM lifecycle_tombstones x
+          WHERE x.source = t.source
+            AND x.native_session_id = t.native_session_id
+        );
+        INSERT INTO schema_meta VALUES ('schema_version', '3');
+        INSERT INTO lifecycle_tombstones
+          VALUES ('codex', 'erased-session', 'erased', '2026-07-27');
+        INSERT INTO lifecycle_tombstones
+          VALUES ('codex', 'excluded-session', 'excluded', '2026-07-27');
+        INSERT INTO transcripts
+          VALUES (1, 'codex', 'excluded-session', '2026-07-27');
+        INSERT INTO transcripts
+          VALUES (2, 'codex', 'unrelated-session', '2026-07-27');
+        """
+    )
+    payload = (
+        json.dumps(
+            {
+                "timestamp": "2026-07-27T01:00:00Z",
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "unrelated survives"},
+            },
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+    sha = hashlib.sha256(payload).hexdigest()
+    relative = "raw/codex/unrelated.jsonl"
+    compressed = backup / f"{relative}.zst"
+    compressed.parent.mkdir(parents=True)
+    subprocess.run(["zstd", "-q", "-o", str(compressed)], input=payload, check=True)
+    connection.execute(
+        """
+        INSERT INTO versions(
+          sha256, transcript_id, blob_path, parser_status, title, cwd,
+          start_time, end_time, created_at
+        ) VALUES (?, 2, ?, 'ok', 'unrelated', '/repo', NULL, NULL, '2026-07-27')
+        """,
+        (sha, relative),
+    )
+    connection.execute(
+        "INSERT INTO observations(version_sha256, present_at_last_scan) VALUES (?, 1)",
+        (sha,),
+    )
+    connection.commit()
+    connection.close()
+    subprocess.run(
+        ["zstd", "-q", "-f", "-o", str(backup / "index.sqlite3.zst"), str(database)],
+        check=True,
+    )
+
+    records = list(exporter._history_records(backup))
+    assert [session for session, _ in records] == ["codex/unrelated-session"]
+    assert records[0][1]["raw_content"] == "unrelated survives"
+    assert all(
+        forbidden not in record["file"]
+        for _, record in records
+        for forbidden in ("excluded-session", "erased-session")
+    )
+
+
+@pytest.mark.parametrize("schema_version", [0, 4, 999])
+def test_central_history_rejects_unknown_or_newer_schema(tmp_path, schema_version):
+    backup = tmp_path / f"backup-{schema_version}"
+    backup.mkdir()
+    database = tmp_path / f"index-{schema_version}.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO schema_meta VALUES ('schema_version', ?)",
+            (str(schema_version),),
+        )
+    subprocess.run(
+        ["zstd", "-q", "-o", str(backup / "index.sqlite3.zst"), str(database)],
+        check=True,
+    )
+    with pytest.raises(ValueError, match="unsupported"):
+        list(exporter._history_records(backup))

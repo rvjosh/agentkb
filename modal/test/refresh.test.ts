@@ -46,6 +46,9 @@ function immutableCertificate(documentCount: number) {
 }
 
 class RefreshClient implements AgentKbClient {
+  async generations(): Promise<never> { throw new Error("unused"); }
+  async findSession(): Promise<never> { throw new Error("unused"); }
+  async deleteGeneration(): Promise<never> { throw new Error("unused"); }
   buildCalls: string[] = [];
   failBuild = false;
 

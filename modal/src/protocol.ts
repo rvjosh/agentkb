@@ -174,6 +174,56 @@ export interface PrunePreviousResult {
   final_previous_generation_id: string | null;
 }
 
+export type GenerationClassification = "current" | "previous" | "orphan" | "staged";
+export type GenerationTargetType = "generation" | "staged";
+
+export interface GenerationInventoryItem {
+  generation_id: string;
+  type: GenerationTargetType;
+  classification: GenerationClassification;
+}
+
+export interface GenerationInventory {
+  schema: 1;
+  current_generation_id: string | null;
+  previous_generation_id: string | null;
+  items: GenerationInventoryItem[];
+  counts: Record<GenerationClassification, number>;
+}
+
+export interface SessionPresenceResult {
+  schema: 1;
+  source: "claude" | "codex";
+  session_id: string;
+  canonical_file: string;
+  results: Array<GenerationInventoryItem & {
+    exact_match_count: number;
+    verified: boolean;
+    scanned_record_count?: number;
+  }>;
+  total_exact_match_count: number;
+  verification_failures: Array<{
+    generation_id: string;
+    type: GenerationTargetType;
+    classification: GenerationClassification;
+    error: string;
+  }>;
+  verified: boolean;
+}
+
+export interface DeleteGenerationResult {
+  schema: 1;
+  dry_run: boolean;
+  deleted: boolean;
+  idempotent: boolean;
+  target_id: string;
+  target_type: GenerationTargetType;
+  classification: Exclude<GenerationClassification, "current">;
+  current_generation_id: string;
+  operation_id: string | null;
+  receipt: Record<string, JsonValue> | null;
+}
+
 export interface BuildMetrics {
   document_batch_size: number;
   document_batch_count: number;
@@ -243,6 +293,21 @@ export function validateGenerationId(value: unknown): string {
     );
   }
   return generationId;
+}
+
+export function validateSessionSource(value: unknown): "claude" | "codex" {
+  if (value !== "claude" && value !== "codex") {
+    fail("source", "must be exactly claude or codex");
+  }
+  return value;
+}
+
+export function validateSessionId(value: unknown): string {
+  const sessionId = stringAt(value, "session_id");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(sessionId)) {
+    fail("session_id", "must be a safe canonical identifier");
+  }
+  return sessionId;
 }
 
 export function generationPaths(generationId: unknown): {
@@ -843,6 +908,319 @@ export function validatePrunePreviousResult(
     current_generation_id: current,
     previous_generation_id: previous,
     final_previous_generation_id: finalPrevious,
+  };
+}
+
+function generationTargetTypeAt(
+  value: unknown,
+  path: string,
+): GenerationTargetType {
+  if (value !== "generation" && value !== "staged") {
+    fail(path, "must be generation or staged");
+  }
+  return value;
+}
+
+function generationClassificationAt(
+  value: unknown,
+  path: string,
+): GenerationClassification {
+  if (
+    value !== "current" &&
+    value !== "previous" &&
+    value !== "orphan" &&
+    value !== "staged"
+  ) {
+    fail(path, "has an unsupported classification");
+  }
+  return value;
+}
+
+function validateInventoryItem(
+  value: unknown,
+  path: string,
+): GenerationInventoryItem {
+  const record = objectAt(value, path);
+  const type = generationTargetTypeAt(record.type, `${path}.type`);
+  const classification = generationClassificationAt(
+    record.classification,
+    `${path}.classification`,
+  );
+  if ((type === "staged") !== (classification === "staged")) {
+    fail(`${path}.classification`, "must agree with target type");
+  }
+  return {
+    generation_id: validateGenerationId(record.generation_id),
+    type,
+    classification,
+  };
+}
+
+export function validateGenerationInventory(value: unknown): GenerationInventory {
+  const record = objectAt(value, "generations");
+  if (!Array.isArray(record.items)) fail("generations.items", "must be an array");
+  if (record.items.length > 1_000) {
+    fail("generations.items", "must contain at most 1000 entries");
+  }
+  const items = record.items.map((item, index) =>
+    validateInventoryItem(item, `generations.items[${index}]`)
+  );
+  const ids = new Set(items.map((item) => item.generation_id));
+  if (ids.size !== items.length) fail("generations.items", "must have unique IDs");
+  const countsRecord = objectAt(record.counts, "generations.counts");
+  const counts = Object.fromEntries(
+    (["current", "previous", "orphan", "staged"] as GenerationClassification[])
+      .map((classification) => [
+        classification,
+        integerAt(countsRecord[classification], `generations.counts.${classification}`),
+      ]),
+  ) as Record<GenerationClassification, number>;
+  for (const classification of Object.keys(counts) as GenerationClassification[]) {
+    if (counts[classification] !== items.filter(
+      (item) => item.classification === classification
+    ).length) {
+      fail(`generations.counts.${classification}`, "must match items");
+    }
+  }
+  const current = record.current_generation_id === null
+    ? null
+    : validateGenerationId(record.current_generation_id);
+  const previous = record.previous_generation_id === null
+    ? null
+    : validateGenerationId(record.previous_generation_id);
+  if (
+    (current === null ? 0 : 1) !== counts.current ||
+    (previous === null ? 0 : 1) !== counts.previous
+  ) {
+    fail("generations.items", "must agree with current and previous pointers");
+  }
+  if (
+    current !== null &&
+    !items.some(
+      (item) => item.generation_id === current && item.classification === "current"
+    )
+  ) {
+    fail("generations.current_generation_id", "must identify the current item");
+  }
+  if (
+    previous !== null &&
+    !items.some(
+      (item) => item.generation_id === previous && item.classification === "previous"
+    )
+  ) {
+    fail("generations.previous_generation_id", "must identify the previous item");
+  }
+  return {
+    schema: schemaAt(record.schema, "generations.schema"),
+    current_generation_id: current,
+    previous_generation_id: previous,
+    items,
+    counts,
+  };
+}
+
+export function validateSessionPresence(value: unknown): SessionPresenceResult {
+  const record = objectAt(value, "find_session");
+  if (!Array.isArray(record.results) || record.results.length > 1_000) {
+    fail("find_session.results", "must be an array of at most 1000 entries");
+  }
+  if (
+    !Array.isArray(record.verification_failures) ||
+    record.verification_failures.length > 1_000
+  ) {
+    fail("find_session.verification_failures", "must be a bounded array");
+  }
+  const results = record.results.map((item, index) => {
+    const path = `find_session.results[${index}]`;
+    const parsed = validateInventoryItem(item, path);
+    const itemRecord = objectAt(item, path);
+    const result: SessionPresenceResult["results"][number] = {
+      ...parsed,
+      exact_match_count: integerAt(
+        itemRecord.exact_match_count,
+        `${path}.exact_match_count`,
+      ),
+      verified: booleanAt(itemRecord.verified, `${path}.verified`),
+    };
+    if (itemRecord.scanned_record_count !== undefined) {
+      result.scanned_record_count = integerAt(
+        itemRecord.scanned_record_count,
+        `${path}.scanned_record_count`,
+      );
+    }
+    return result;
+  });
+  const failures = record.verification_failures.map((item, index) => {
+    const path = `find_session.verification_failures[${index}]`;
+    const itemRecord = objectAt(item, path);
+    return {
+      ...validateInventoryItem(item, path),
+      error: stringAt(itemRecord.error, `${path}.error`),
+    };
+  });
+  const source = validateSessionSource(record.source);
+  const sessionId = validateSessionId(record.session_id);
+  const canonicalFile = stringAt(record.canonical_file, "find_session.canonical_file");
+  if (canonicalFile !== `agent-history-central/${source}/${sessionId}.md`) {
+    fail("find_session.canonical_file", "must match the exact session identity");
+  }
+  const total = integerAt(
+    record.total_exact_match_count,
+    "find_session.total_exact_match_count",
+  );
+  if (
+    total !== results.reduce(
+      (sum, item) => sum + (item.verified ? item.exact_match_count : 0),
+      0,
+    )
+  ) {
+    fail("find_session.total_exact_match_count", "must match verified results");
+  }
+  const verified = booleanAt(record.verified, "find_session.verified");
+  if (verified !== (failures.length === 0)) {
+    fail("find_session.verified", "must agree with verification failures");
+  }
+  return {
+    schema: schemaAt(record.schema, "find_session.schema"),
+    source,
+    session_id: sessionId,
+    canonical_file: canonicalFile,
+    results,
+    total_exact_match_count: total,
+    verification_failures: failures,
+    verified,
+  };
+}
+
+export function validateDeleteGenerationResult(
+  value: unknown,
+): DeleteGenerationResult {
+  const record = objectAt(value, "delete_generation");
+  const classification = generationClassificationAt(
+    record.classification,
+    "delete_generation.classification",
+  );
+  if (classification === "current") {
+    fail("delete_generation.classification", "must never be current");
+  }
+  const dryRun = booleanAt(record.dry_run, "delete_generation.dry_run");
+  const deleted = booleanAt(record.deleted, "delete_generation.deleted");
+  if (dryRun && deleted) fail("delete_generation.deleted", "must be false on dry run");
+  const idempotent = booleanAt(
+    record.idempotent,
+    "delete_generation.idempotent",
+  );
+  const targetId = validateGenerationId(record.target_id);
+  const currentId = validateGenerationId(record.current_generation_id);
+  const targetType = generationTargetTypeAt(
+    record.target_type,
+    "delete_generation.target_type",
+  );
+  if (targetId === currentId) {
+    fail("delete_generation.target_id", "must not equal current generation");
+  }
+  if ((targetType === "staged") !== (classification === "staged")) {
+    fail("delete_generation.classification", "must agree with target type");
+  }
+  const operationId = record.operation_id === null
+    ? null
+    : stringAt(record.operation_id, "delete_generation.operation_id");
+  if (
+    operationId !== null &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      operationId,
+    )
+  ) {
+    fail("delete_generation.operation_id", "must be a canonical UUID");
+  }
+  const receipt = record.receipt === null
+    ? null
+    : objectAt(
+        assertJsonSerializable(record.receipt),
+        "delete_generation.receipt",
+      ) as Record<string, JsonValue>;
+  if (deleted && (dryRun || idempotent)) {
+    fail("delete_generation.deleted", "must describe a new forced deletion");
+  }
+  if (!dryRun && deleted === idempotent) {
+    fail(
+      "delete_generation.idempotent",
+      "must identify either a new deletion or an idempotent completion",
+    );
+  }
+  if ((deleted || idempotent) && (operationId === null || receipt === null)) {
+    fail(
+      "delete_generation.receipt",
+      "must accompany every completed deletion result",
+    );
+  }
+  if (!deleted && !idempotent && receipt !== null) {
+    fail("delete_generation.receipt", "must be null for an uncompleted dry run");
+  }
+  if (receipt !== null) {
+    schemaAt(receipt.schema, "delete_generation.receipt.schema");
+    if (receipt.state !== "complete") {
+      fail("delete_generation.receipt.state", "must equal complete");
+    }
+    if (
+      receipt.operation_id !== operationId ||
+      receipt.target_id !== targetId ||
+      receipt.target_type !== targetType ||
+      receipt.classification !== classification ||
+      receipt.expected_current_generation_id !== currentId
+    ) {
+      fail(
+        "delete_generation.receipt",
+        "must agree with the completed result identity",
+      );
+    }
+    const counts = objectAt(
+      receipt.counts,
+      "delete_generation.receipt.counts",
+    );
+    if (
+      integerAt(
+        counts.directories_deleted,
+        "delete_generation.receipt.counts.directories_deleted",
+      ) !== 1
+    ) {
+      fail(
+        "delete_generation.receipt.counts.directories_deleted",
+        "must equal 1",
+      );
+    }
+    const exactMatches = integerAt(
+      counts.exact_match_count,
+      "delete_generation.receipt.counts.exact_match_count",
+    );
+    const verification = objectAt(
+      receipt.verification,
+      "delete_generation.receipt.verification",
+    );
+    if (
+      verification.target_absent !== true ||
+      verification.pointer_consistent !== true ||
+      verification.current_generation_id !== currentId ||
+      verification.exact_match_count !== exactMatches ||
+      verification.previous_generation_id === targetId
+    ) {
+      fail(
+        "delete_generation.receipt.verification",
+        "must prove target absence and pointer consistency",
+      );
+    }
+  }
+  return {
+    schema: schemaAt(record.schema, "delete_generation.schema"),
+    dry_run: dryRun,
+    deleted,
+    idempotent,
+    target_id: targetId,
+    target_type: targetType,
+    classification,
+    current_generation_id: currentId,
+    operation_id: operationId,
+    receipt,
   };
 }
 

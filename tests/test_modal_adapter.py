@@ -99,6 +99,9 @@ def test_adapter_exposes_only_sdk_functions_and_generation_methods():
     for function_name in (
         "build_generation",
         "status",
+        "generations",
+        "find_session",
+        "delete_generation_exact",
         "warm_current",
         "search_current",
     ):

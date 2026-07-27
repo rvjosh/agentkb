@@ -4,6 +4,7 @@ import type { ModalClient } from "modal";
 import { ModalAgentKbClient } from "../src/client";
 
 const ID = "g-20260725T123456Z-001122aabbcc";
+const CURRENT_ID = "g-20260725T133456Z-112233aabbcc";
 
 test("warmDetached awaits SDK spawn without awaiting GPU completion", async () => {
   const calls: unknown[][] = [];
@@ -115,4 +116,77 @@ test("prune validates input and routes to the private CPU endpoint", async () =>
   ]);
   expect(client.prunePrevious("../escape", false)).rejects.toThrow();
   expect(calls).toHaveLength(2);
+});
+
+test("generation erasure methods validate and route only private SDK calls", async () => {
+  const calls: unknown[][] = [];
+  const modal = {
+    functions: {
+      fromName: async (_app: string, name: string) => ({
+        remote: async (args: unknown[]) => {
+          calls.push([name, args]);
+          if (name === "generations") {
+            return {
+              schema: 1,
+              current_generation_id: ID,
+              previous_generation_id: null,
+              items: [{
+                generation_id: ID,
+                type: "generation",
+                classification: "current",
+              }],
+              counts: { current: 1, previous: 0, orphan: 0, staged: 0 },
+            };
+          }
+          if (name === "find_session") {
+            return {
+              schema: 1,
+              source: "codex",
+              session_id: "session-1",
+              canonical_file: "agent-history-central/codex/session-1.md",
+              results: [],
+              total_exact_match_count: 0,
+              verification_failures: [],
+              verified: true,
+            };
+          }
+          return {
+            schema: 1,
+            dry_run: true,
+            deleted: false,
+            idempotent: false,
+            target_id: ID,
+            target_type: "staged",
+            classification: "staged",
+            current_generation_id: CURRENT_ID,
+            operation_id: null,
+            receipt: null,
+          };
+        },
+      }),
+    },
+    close: () => {},
+  } as unknown as ModalClient;
+  const client = new ModalAgentKbClient(modal);
+  expect((await client.generations()).counts.current).toBe(1);
+  expect((await client.findSession("codex", "session-1")).verified).toBeTrue();
+  expect(
+    (await client.deleteGeneration(
+      ID,
+      "staged",
+      CURRENT_ID,
+      false,
+      "test",
+      "privacy",
+    )).dry_run,
+  ).toBeTrue();
+  expect(calls).toEqual([
+    ["generations", []],
+    ["find_session", ["codex", "session-1"]],
+    [
+      "delete_generation_exact",
+      [ID, "staged", CURRENT_ID, false, "test", "privacy", null],
+    ],
+  ]);
+  expect(client.findSession("pi" as "codex", "session-1")).rejects.toThrow();
 });

@@ -5,6 +5,7 @@ import {
   createGenerationId,
   generationPaths,
   validateBuildResult,
+  validateDeleteGenerationResult,
   validateGenerationId,
   validatePrunePreviousResult,
   validateSearchRequest,
@@ -274,4 +275,65 @@ test("validates prune result state transitions", () => {
       deleted: true,
     }),
   ).toThrow(/dry runs/);
+});
+
+test("validates completed generation deletion receipts and state transitions", () => {
+  const current = "g-20260725T130000Z-ddeeff001122";
+  const operationId = "123e4567-e89b-42d3-a456-426614174000";
+  const receipt = {
+    schema: 1,
+    operation_id: operationId,
+    state: "complete",
+    target_id: ID,
+    target_type: "generation",
+    expected_current_generation_id: current,
+    classification: "orphan",
+    actor: "test",
+    reason: "privacy",
+    exact_session_key: "codex/session-1",
+    started_at: "2026-07-27T01:00:00Z",
+    finished_at: "2026-07-27T01:00:01Z",
+    counts: { directories_deleted: 1, exact_match_count: 2 },
+    verification: {
+      target_absent: true,
+      pointer_consistent: true,
+      current_generation_id: current,
+      previous_generation_id: null,
+      exact_match_count: 2,
+    },
+  };
+  const completed = {
+    schema: 1,
+    dry_run: false,
+    deleted: true,
+    idempotent: false,
+    target_id: ID,
+    target_type: "generation",
+    classification: "orphan",
+    current_generation_id: current,
+    operation_id: operationId,
+    receipt,
+  };
+  expect(validateDeleteGenerationResult(completed).receipt).toEqual(receipt);
+  expect(() =>
+    validateDeleteGenerationResult({ ...completed, receipt: null }),
+  ).toThrow(/must accompany/);
+  expect(() =>
+    validateDeleteGenerationResult({
+      ...completed,
+      operation_id: "not-a-uuid",
+    }),
+  ).toThrow(/canonical UUID/);
+  expect(() =>
+    validateDeleteGenerationResult({
+      ...completed,
+      receipt: {
+        ...receipt,
+        verification: {
+          ...receipt.verification,
+          previous_generation_id: ID,
+        },
+      },
+    }),
+  ).toThrow(/target absence/);
 });
