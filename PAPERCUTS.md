@@ -1,49 +1,35 @@
 # Papercuts live queue
 
-<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"7636064e88e8775582936ac4bc06f8536f9f6f0121ce94c067965defaff0ce27","manifestSha256":"1a457248b6ea538f49f8e05de914fe554eb97eec0c6676124d44562e0ce5b6c8","sourceEntryCount":34,"newestSourceTimestamp":"2026-07-27T15:17:23Z"} -->
+<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"7636064e88e8775582936ac4bc06f8536f9f6f0121ce94c067965defaff0ce27","manifestSha256":"b97a27287b705244af6f2150820a8336da8c2f229d14a0431c5054398e82be78","sourceEntryCount":34,"newestSourceTimestamp":"2026-07-27T15:17:23Z"} -->
 > **Generated — do not edit.** Run `papercuts refresh`; raw history remains in `PAPERCUTS-LEDGER.md`.
 
 ## Open groups
 
 | ID | Status | Count / date range | Task | Issue | Owner |
 |---|---|---|---|---|---|
-| — | — | — | No open groups | — | — |
+| AKB-PC-001 | open | 3 · 2026-07-25T06:32:24Z — 2026-07-27T15:07:12Z | Python test and lint tools are not declared in the project environment |  | agentkb |
+| AKB-PC-002 | open | 5 · 2026-07-25T07:46:51Z — 2026-07-27T05:42:20Z | Python and Modal commands lack one canonical project-environment recipe |  | agentkb |
+| AKB-PC-003 | open | 1 · 2026-07-25T07:49:26Z | Modal fresh-container configuration uses a deprecated option |  | agentkb |
+| AKB-PC-004 | open | 1 · 2026-07-25T08:02:17Z | Modal client echoes private raw payloads to stdout |  | agentkb |
+| AKB-PC-005 | open | 1 · 2026-07-25T08:20:33Z | Process verification can self-match its own probe |  | agentkb |
+| AKB-PC-007 | open | 1 · 2026-07-25T08:42:09Z | Compile verification creates ignored-bytecode cleanup work |  | agentkb |
+| AKB-PC-008 | open | 1 · 2026-07-25T09:01:13Z | Injected AgentKbClient fakes duplicate the full interface |  | agentkb |
+| AKB-PC-009 | open | 1 · 2026-07-25T09:05:58Z | Production corpus refresh is not memory-bounded |  | agentkb |
+| AKB-PC-011 | open | 1 · 2026-07-25T09:18:42Z | Modal Python images omit cbor2 required by the JavaScript SDK |  | agentkb |
+| AKB-PC-012 | open | 1 · 2026-07-25T13:53:35Z | Bounded FastPLAID batches silently freeze first-batch centroids |  | agentkb |
+| AKB-PC-014 | open | 1 · 2026-07-25T14:16:32Z | Modal volume inspection lacks a bounded summary recipe |  | agentkb |
+| AKB-PC-015 | open | 1 · 2026-07-25T16:05:22Z | Merge recipes assume origin/main instead of the repository default branch |  | agentkb |
+| AKB-PC-016 | open | 1 · 2026-07-25T16:10:32Z | GitHub CLI PR creation produced contradictory ref-resolution errors |  | github-cli |
+| AKB-PC-017 | open | 1 · 2026-07-25T16:23:03Z | Modal CLI subcommands reject --help |  | agentkb |
+| AKB-PC-018 | open | 1 · 2026-07-25T16:41:39Z | Repository root lacks local AGENTS.md guidance |  | agentkb |
+| AKB-PC-020 | open | 1 · 2026-07-27T00:45:55Z | Bun test discovery depends silently on the working directory |  | agentkb |
+| AKB-PC-021 | open | 3 · 2026-07-27T05:17:14Z — 2026-07-27T13:42:37Z | repo-sync status requires an explicit target without an obvious discovery path |  | repo-sync-admin |
+| AKB-PC-022 | open | 1 · 2026-07-27T05:50:34Z | Production-shaped Modal mount and corpus-size fixtures are missing |  | agentkb |
+| AKB-PC-023 | open | 1 · 2026-07-27T10:18:03Z | Fresh worktrees lack a documented dependency bootstrap before Bun tests |  | agentkb |
+| AKB-PC-024 | open | 1 · 2026-07-27T15:17:23Z | TypeScript verification command is not discoverable from the repository root |  | agentkb |
 
 ## Untriaged ledger entries
 
 | Entry | Timestamp | Message |
 |---:|---|---|
-| 1 | 2026-07-25T06:32:24Z | Running the documented/default AgentKB verification path with `uv run pytest` failed because pytest is not declared in project dependencies or a dev group; use `uv run --with pytest pytest` for now and consider adding a test dependency group. |
-| 2 | 2026-07-25T07:46:51Z | AgentKB Modal benchmark preflight → the documented-looking `modal` invocation is not on PATH (likely must run through the project environment, e.g. `uv run modal`). |
-| 3 | 2026-07-25T07:49:26Z | Modal 1.5.3 follow-up app validation → `max_inputs=1` still works but emits a deprecation error; the supported fresh-container setting is `single_use_containers=True` on the class. |
-| 4 | 2026-07-25T08:02:17Z | Remote AgentKB generation build → the existing modal_client writes the requested private JSON file but also echoes the entire payload to stdout; callers need a summary-only print to honor raw-result privacy. |
-| 5 | 2026-07-25T08:20:33Z | Modal benchmark closeout process scan → pgrep -af returned only the verification shell PID because the exact resource-name pattern appeared in that shell command; use ps output filtered to executable names or a pattern kept out of argv for an unambiguous check. |
-| 6 | 2026-07-25T08:39:39Z | Installing the new Modal TypeScript control-plane dependencies with Bun → Bun reported one blocked postinstall without identifying the package or whether it matters; surface the package name and impact directly in install output. |
-| 7 | 2026-07-25T08:40:17Z | Validating the Modal adapter locally → Modal 1.5.3 crashes on a modal.parameter annotation when postponed annotations turn str into a forward-reference string, and this repo has no bare python executable on PATH (uv run python is required); document the annotation limitation and standardize verification commands on uv. |
-| 8 | 2026-07-25T08:42:09Z | Cleaning verification artifacts → compileall created an unignored __pycache__ inside the new package, and the command runner rejected removal of that exact generated directory via rm even though the safer trash command succeeded; prefer compile checks that suppress bytecode and suggest trash for generated cleanup. |
-| 9 | 2026-07-25T09:01:13Z | Extending AgentKbClient with warmDetached during hook work → the first strict typecheck failed because existing injected test fakes did not implement the new interface method; a shared fake/helper pattern could make future client-surface additions less repetitive. |
-| 10 | 2026-07-25T09:05:58Z | Production AgentKB refresh validation/upload → the 988 MB wiki+chat corpus was read and parsed wholesale, peaking at 6.33 GB local memory before upload; stream hashing/validation and batch the remote builder before retrying. |
-| 11 | 2026-07-25T09:07:10Z | Repository inventory with an optional rg AGENTS.md lookup was chained with && → rg returned 1 for no matches and skipped the remaining read-only checks; use independent commands or tolerate the expected no-match status. |
-| 12 | 2026-07-25T09:18:42Z | First TypeScript SDK call to the deployed AgentKB app → Modal returned “CBOR support requires cbor2” after a successful 988 MB stage; the Python worker/router images must include cbor2 whenever called from Modal’s JS SDK. |
-| 13 | 2026-07-25T13:49:07Z | Running AgentKB’s documented-style model-free test suite with `uv run pytest` → pytest is not declared/provisioned, so uv could not spawn it; add a dev dependency group or document `uv run --with pytest pytest`. |
-| 14 | 2026-07-25T13:53:35Z | Making the Modal builder memory-bounded by appending 256-document PLAID batches → FastPLAID silently fixes centroids from the first batch and only warns that later updates do not recompute them; expose/train-on-global-corpus semantics so bounded builds cannot accidentally degrade recall. |
-| 15 | 2026-07-25T13:59:11Z | Inspecting installed FastPLAID metadata and patching the refresh contract → the shell has no bare `python` executable (use `uv run python`), and one apply_patch context missed because the import order differed from the expected snippet. |
-| 16 | 2026-07-25T14:16:14Z | Updating the Modal README during cold-start work → the first apply_patch missed because its context split “K-means sample size” differently than expected; a narrower nearby-context patch succeeded. |
-| 17 | 2026-07-25T14:16:32Z | Inspecting a Modal generation directory with `modal volume ls .../fast_plaid_index --json` → the command recursively emitted 7,058 entries / ~60k tokens with no obvious depth or summary option; add bounded listing/size support or document a safe inspection recipe. |
-| 18 | 2026-07-25T14:18:13Z | Inspecting the installed FastPLAID API → the repository environment has no `python` executable on PATH, so the obvious introspection command failed; use `uv run python` in this repo. |
-| 19 | 2026-07-25T14:25:27Z | Deploying AgentKB with pinned `uvx --from modal==1.5.3 modal deploy src/agentkb/modal_backend/app.py` → Modal could not import the repo’s `agentkb` src-layout package; document/use the project environment (`uv run --with modal==1.5.3 modal deploy ...`) for deployment. |
-| 20 | 2026-07-25T16:05:22Z | Checking whether the AgentKB feature branch was ready to merge with the conventional `origin/main` base → this repo has no `origin/main`, so the command failed; document the default branch or use the remote HEAD ref in merge recipes. |
-| 21 | 2026-07-25T16:10:32Z | Opening the pushed AgentKB PR with `gh pr create --base master --head codex/agentkb-modal-benchmark` → GitHub simultaneously reported blank SHAs, no commits, and that the head was not a branch even though git push had just confirmed the remote ref; verify gh repo/ref resolution and use fully qualified repo/head when needed. |
-| 22 | 2026-07-25T16:23:03Z | Preparing a matched AgentKB retrieval comparison → `bun run modal/src/cli.ts search --help` exits with `unknown option: --help`; each production subcommand should expose concise usage without requiring source inspection. |
-| 23 | 2026-07-25T16:41:39Z | Starting the AgentKB bounded-output fix → the task says to follow each repository AGENTS.md, but agentkb has no AGENTS.md at its repository root; had to locate inherited/applicable instructions. |
-| 24 | 2026-07-27T00:36:17Z | Inspecting the compressed agent-history SQLite schema → a command with a trap that removed one mktemp file was rejected as unsafe; permit validated unique temp cleanup or make the rejection guidance mention leaving the temp directory for OS cleanup. |
-| 25 | 2026-07-27T00:45:55Z | Running the requested AgentKB Bun suite → `bun test modal/test` works from the repo root but silently matches no tests from `modal/`; keep verification commands anchored to their documented cwd or make the no-match exit nonzero in CI. |
-| 26 | 2026-07-27T05:17:14Z | Checking AgentKB repository parity → `repo-sync status --repo agentkb --json` failed because status requires an explicit --target; help/output did not make a targetless inspection path obvious. |
-| 27 | 2026-07-27T05:27:54Z | Verifying AgentKB erasure changes → the first focused pytest command ran from modal/ while naming root-relative tests, and a mechanical TypeScript import patch left one stray type line at EOF; both were caught immediately by pytest/typecheck and corrected. |
-| 28 | 2026-07-27T05:33:46Z | Repository parity preflight for agentkb → repo-sync status requires an explicit --target, which was not evident from the parity skill example/context; retried by inspecting the canonical manifest directly. |
-| 29 | 2026-07-27T05:42:20Z | AgentKB verification → bare `python` and repo-local `ruff` were unavailable despite Python/uv project metadata, so verification required `uv run python` and `uvx ruff`; also `git status` rejects an absolute checkpoint path outside the repository, so checkpoint state must be inspected separately. |
-| 30 | 2026-07-27T05:50:34Z | Canarying the new AgentKB generation inventory on Modal → local tests rejected a symlinked volume root even though Modal presents its configured mount that way, and the first all-generation scan capped a real orphan metadata DB at 2 GiB; production-shaped mount fixtures and corpus-size fixtures should be part of control-plane tests. |
-| 31 | 2026-07-27T10:18:03Z | Running the focused AgentKB Modal CLI tests in the task worktree → Bun could not resolve the declared modal package because dependencies were not present; the task forbids installation, so a documented dependency-free test path or pre-provisioned worktree dependencies would help. |
-| 32 | 2026-07-27T13:42:37Z | Checking repository parity before development → repo-sync status requires an explicit --target, but that requirement was easy to miss on the first call; surface the current target or a clearer hint. |
-| 33 | 2026-07-27T15:07:12Z | Verifying the AgentKB exporter changes → `uv run ruff` could not spawn because ruff is not installed in the project environment; the repository has a .ruff_cache but no declared ruff dev dependency or runnable lint recipe. |
-| 34 | 2026-07-27T15:17:23Z | Verifying the transcript-generation migration → ran AgentKB `bun run typecheck` from the repository root, where no script exists; the declared TypeScript package and command live under modal/. |
+| — | — | None |
