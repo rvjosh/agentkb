@@ -436,7 +436,36 @@ def test_schema_v3_excludes_tombstoned_and_physically_erased_sessions_only(
     )
 
 
-@pytest.mark.parametrize("schema_version", [0, 5, 999])
+def test_central_history_accepts_schema_v5_query_contract(tmp_path):
+    backup = tmp_path / "backup-v5"
+    database = tmp_path / "index-v5.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE transcripts (
+              id INTEGER PRIMARY KEY, source TEXT, native_session_id TEXT,
+              created_at TEXT
+            );
+            CREATE TABLE versions (
+              sha256 TEXT PRIMARY KEY, transcript_id INTEGER, blob_path TEXT,
+              parser_status TEXT, title TEXT, cwd TEXT, start_time TEXT,
+              end_time TEXT, created_at TEXT
+            );
+            CREATE TABLE observations (
+              id INTEGER PRIMARY KEY, version_sha256 TEXT,
+              present_at_last_scan INTEGER
+            );
+            CREATE VIEW publication_eligible_sessions AS
+            SELECT id, source, native_session_id, created_at FROM transcripts;
+            INSERT INTO schema_meta VALUES ('schema_version', '5');
+            """
+        )
+    publish_history_generation(backup, database)
+    assert list(exporter._history_records(backup)) == []
+
+
+@pytest.mark.parametrize("schema_version", [0, 6, 999])
 def test_central_history_rejects_unknown_or_newer_schema(tmp_path, schema_version):
     backup = tmp_path / f"backup-{schema_version}"
     backup.mkdir()

@@ -501,13 +501,13 @@ def _history_records(
                 raise ValueError(
                     "central history snapshot has a malformed schema version"
                 ) from exc
-        if schema_version not in {1, 2, 3, 4}:
+        if schema_version not in {1, 2, 3, 4, 5}:
             raise ValueError(
                 f"unsupported central history schema version: {schema_version}"
             )
         sessions_relation = (
             "publication_eligible_sessions"
-            if schema_version in {2, 3, 4}
+            if schema_version in {2, 3, 4, 5}
             else "transcripts"
         )
         rows = connection.execute(
