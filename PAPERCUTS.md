@@ -1,6 +1,6 @@
 # Papercuts live queue
 
-<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"7636064e88e8775582936ac4bc06f8536f9f6f0121ce94c067965defaff0ce27","manifestSha256":"b97a27287b705244af6f2150820a8336da8c2f229d14a0431c5054398e82be78","sourceEntryCount":34,"newestSourceTimestamp":"2026-07-27T15:17:23Z"} -->
+<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"4ec71847faad2b9b15365f1059b1412ac2e251503576e07a06030debc3e1e4b2","manifestSha256":"b97a27287b705244af6f2150820a8336da8c2f229d14a0431c5054398e82be78","sourceEntryCount":35,"newestSourceTimestamp":"2026-07-30T15:05:54Z"} -->
 > **Generated — do not edit.** Run `papercuts refresh`; raw history remains in `PAPERCUTS-LEDGER.md`.
 
 ## Open groups
@@ -32,4 +32,4 @@
 
 | Entry | Timestamp | Message |
 |---:|---|---|
-| — | — | None |
+| 35 | 2026-07-30T15:05:54Z | Auditing archive-schema contracts with a proximity regex → multiline test values were missed and rg exited 1; prefer enumerating the schema symbol first, then inspect each hit context. |

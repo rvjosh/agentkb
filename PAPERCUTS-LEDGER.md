@@ -135,3 +135,7 @@ Verifying the AgentKB exporter changes → `uv run ruff` could not spawn because
 ## 2026-07-27T15:17:23Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019fa045-a4c0-7ce3-b55f-adb3c405308f
 
 Verifying the transcript-generation migration → ran AgentKB `bun run typecheck` from the repository root, where no script exists; the declared TypeScript package and command live under modal/.
+
+## 2026-07-30T15:05:54Z · unknown · joshuaizzard · agentkb:. · 019fb38d-b2a6-7942-9a0a-c720fb336a39
+
+Auditing archive-schema contracts with a proximity regex → multiline test values were missed and rg exited 1; prefer enumerating the schema symbol first, then inspect each hit context.

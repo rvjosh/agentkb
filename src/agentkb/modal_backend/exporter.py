@@ -37,6 +37,7 @@ MANIFEST_FILENAME = "manifest.json"
 COLLECTIONS = ("chats", "wiki", "wiki:source")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHIVE_POINTER_SCHEMA = 1
+HISTORY_ARCHIVE_SCHEMA = 5
 
 
 def _sanitize_json_strings(value: Any) -> Any:
@@ -377,7 +378,7 @@ def _load_history_pointer(backup_root: Path) -> tuple[dict[str, Any], Path, Path
     )
     if (
         pointer.get("schemaVersion") != ARCHIVE_POINTER_SCHEMA
-        or pointer.get("archiveSchema") != 4
+        or pointer.get("archiveSchema") != HISTORY_ARCHIVE_SCHEMA
         or pointer.get("catalogSchema") != 1
         or not isinstance(pointer.get("sqliteRuntimeVersion"), str)
         or any(

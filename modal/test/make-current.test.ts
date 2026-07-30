@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { expect, test } from "bun:test";
 
 import type { AgentKbClient } from "../src/client";
@@ -7,6 +12,7 @@ import {
   makeCurrent,
   resolveSourceRegistry,
   runBoundedCommand,
+  validateHistoryGeneration,
   type MakeCurrentDependencies,
   type MakeCurrentReceipt,
   type SourcePlan,
@@ -16,6 +22,77 @@ import type { GenerationManifest } from "../src/protocol";
 
 const ID = "g-20260725T123456Z-001122aabbcc";
 const client = { close() {} } as AgentKbClient;
+
+function sha256(value: Uint8Array | string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function historyGenerationFixture(archiveSchema: number): Promise<{
+  root: string;
+  databaseSha256: string;
+  catalogSha256: string;
+}> {
+  const root = await mkdtemp(join(tmpdir(), "agentkb-history-generation-"));
+  await chmod(root, 0o700);
+  const database = new TextEncoder().encode("schema-5 database fixture\n");
+  const databaseSha256 = sha256(database);
+  const databaseFilename = `history-index-${databaseSha256}.sqlite3.zst`;
+  const databasePath = join(root, databaseFilename);
+  const sourcePath = join(root, "database.sqlite3");
+  await writeFile(sourcePath, database, { mode: 0o600 });
+  const compressed = Bun.spawnSync([
+    "/opt/homebrew/bin/zstd",
+    "-q",
+    "-f",
+    sourcePath,
+    "-o",
+    databasePath,
+  ]);
+  if (compressed.exitCode !== 0) {
+    throw new Error(`cannot create history fixture: ${compressed.stderr.toString()}`);
+  }
+  const compressedDatabase = await Bun.file(databasePath).bytes();
+  await chmod(databasePath, 0o600);
+  await rm(sourcePath);
+
+  const catalog = "fixture catalog\n";
+  const catalogSha256 = sha256(catalog);
+  const catalogFilename = `provenance-catalog-${catalogSha256}.jsonl`;
+  await writeFile(join(root, catalogFilename), catalog, { mode: 0o600 });
+
+  const pointer = {
+    schemaVersion: 1,
+    archiveSchema,
+    catalogSchema: 1,
+    database: {
+      filename: databaseFilename,
+      sha256: databaseSha256,
+      compressedSha256: sha256(compressedDatabase),
+      bytes: database.byteLength,
+      compressedBytes: compressedDatabase.byteLength,
+      logicalFingerprint: "c".repeat(64),
+    },
+    catalog: {
+      filename: catalogFilename,
+      sha256: catalogSha256,
+      bytes: Buffer.byteLength(catalog),
+      recordCount: 1,
+      fingerprint: "d".repeat(64),
+    },
+    sqliteRuntimeVersion: "3.50.4",
+    referencedBlobCount: 0,
+    verifiedBlobCount: 0,
+    verifiedBytes: 0,
+    knownParserProvenanceCount: 1,
+    legacyParserProvenanceCount: 0,
+    integrityCheck: "ok",
+    foreignKeyCheck: "ok",
+  };
+  await writeFile(join(root, "current.json"), JSON.stringify(pointer), {
+    mode: 0o600,
+  });
+  return { root, databaseSha256, catalogSha256 };
+}
 
 function manifest(plan: SourcePlan): GenerationManifest {
   return {
@@ -160,6 +237,34 @@ test("source registry has deterministic defaults and path overrides", async () =
       ?.exportRoots[1]?.include,
   ).toEqual(["watch-history-latest.jsonl", "watch-later-latest.jsonl"]);
 });
+
+test("history generation validation accepts the production archive schema", async () => {
+  const fixture = await historyGenerationFixture(5);
+  try {
+    expect(await validateHistoryGeneration(fixture.root)).toEqual({
+      databaseSha256: fixture.databaseSha256,
+      catalogSha256: fixture.catalogSha256,
+      databaseFilename: `history-index-${fixture.databaseSha256}.sqlite3.zst`,
+      catalogFilename: `provenance-catalog-${fixture.catalogSha256}.jsonl`,
+    });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test.each([4, 6])(
+  "history generation validation rejects archive schema %d",
+  async (archiveSchema) => {
+    const fixture = await historyGenerationFixture(archiveSchema);
+    try {
+      await expect(validateHistoryGeneration(fixture.root)).rejects.toThrow(
+        "central history current.json schema is invalid",
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("upstream success publishes healthy after backup run and status", async () => {
   const state = dependencies();

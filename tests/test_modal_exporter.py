@@ -454,7 +454,7 @@ def test_central_history_rejects_unknown_or_newer_schema(tmp_path, schema_versio
         list(exporter._history_records(backup))
 
 
-def publish_history_generation(backup, database):
+def publish_history_generation(backup, database, *, archive_schema=5):
     backup.mkdir(parents=True, exist_ok=True)
     os.chmod(backup, 0o700)
     database_bytes = database.read_bytes()
@@ -472,7 +472,7 @@ def publish_history_generation(backup, database):
     os.chmod(catalog, 0o600)
     pointer = {
         "schemaVersion": 1,
-        "archiveSchema": 4,
+        "archiveSchema": archive_schema,
         "catalogSchema": 1,
         "database": {
             "filename": compressed.name,
@@ -501,6 +501,34 @@ def publish_history_generation(backup, database):
     current = backup / "current.json"
     current.write_text(json.dumps(pointer, sort_keys=True, separators=(",", ":")) + "\n")
     os.chmod(current, 0o600)
+
+
+@pytest.mark.parametrize(
+    ("archive_schema", "accepted"),
+    [(4, False), (5, True), (6, False)],
+)
+def test_history_generation_requires_archive_schema_5(
+    tmp_path, archive_schema, accepted
+):
+    backup = tmp_path / f"backup-archive-schema-{archive_schema}"
+    database = tmp_path / f"archive-schema-{archive_schema}.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_meta VALUES ('schema_version', '4')")
+    publish_history_generation(
+        backup,
+        database,
+        archive_schema=archive_schema,
+    )
+
+    if accepted:
+        pointer, _, _ = exporter._load_history_pointer(backup)
+        assert pointer["archiveSchema"] == 5
+    else:
+        with pytest.raises(ValueError, match="schema is invalid"):
+            exporter._load_history_pointer(backup)
 
 
 def test_history_generation_requires_pointer_and_validates_catalog(tmp_path):

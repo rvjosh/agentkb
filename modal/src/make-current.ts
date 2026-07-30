@@ -39,6 +39,7 @@ export const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60_000;
 export const BACKUP_FRESHNESS_MINUTES = 90;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const ARCHIVE_POINTER_SCHEMA = 1;
+const ARCHIVE_SCHEMA = 5;
 
 export interface SourceExportRoot {
   path: string;
@@ -399,7 +400,7 @@ export async function runBoundedCommand(
 
 interface ArchivePointer {
   schemaVersion: 1;
-  archiveSchema: 4;
+  archiveSchema: 5;
   catalogSchema: 1;
   database: {
     filename: string;
@@ -452,7 +453,7 @@ function parseArchivePointer(value: unknown): ArchivePointer {
   const catalog = item.catalog;
   if (
     item.schemaVersion !== ARCHIVE_POINTER_SCHEMA ||
-    item.archiveSchema !== 4 ||
+    item.archiveSchema !== ARCHIVE_SCHEMA ||
     item.catalogSchema !== 1 ||
     typeof item.sqliteRuntimeVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/.test(item.sqliteRuntimeVersion) ||
