@@ -45,7 +45,13 @@ from agentkb.chats.renderer import (  # noqa: E402
     migrate_sessions_layout,
 )
 from agentkb.communications.sources import SOURCES as COMMUNICATIONS_SOURCES  # noqa: E402
-from agentkb.encoder import DEFAULT_MODEL, get_encoder  # noqa: E402
+from agentkb.encoder import (  # noqa: E402
+    DEFAULT_MODEL,
+    ModelCacheMissingError,
+    get_encoder,
+    model_cache_recovery,
+    require_cached_model,
+)
 from agentkb.prompts import resolve_prompt  # noqa: E402
 from agentkb.search import (  # noqa: E402
     merge_multi_collection,
@@ -215,11 +221,45 @@ def search(query, scope, pattern, fixed, word, files_only, full_content,
 # --- Cross-cutting: index all ---
 
 
+@main.command("model-cache")
+@click.option("--model", help="Override ColBERT model name")
+@click.option("--json", "json_output", is_flag=True, help="Stable JSON output for agents")
+def model_cache(model, json_output):
+    """Check whether a ColBERT model snapshot is cached locally."""
+    effective_model = model or DEFAULT_MODEL
+    try:
+        require_cached_model(effective_model)
+    except ModelCacheMissingError:
+        recovery = model_cache_recovery(effective_model)
+        if json_output:
+            click.echo(json_mod.dumps({
+                "model": effective_model,
+                "cached": False,
+                "recovery": recovery,
+            }, sort_keys=True))
+            raise click.exceptions.Exit(1)
+        raise click.ClickException(recovery)
+
+    if json_output:
+        click.echo(json_mod.dumps({
+            "model": effective_model,
+            "cached": True,
+            "recovery": None,
+        }, sort_keys=True))
+    else:
+        click.echo(f"[agentkb] Cached model ready: {effective_model}")
+
+
 @main.command()
 @click.option("--model", help="Override ColBERT model name")
 @click.option("--no-fetch", is_flag=True, help="Skip all network calls (git pull/push, refs, communications)")
+@click.option(
+    "--cached-only",
+    is_flag=True,
+    help="Require a cached model and index locally without network calls",
+)
 @click.option("--rebuild", is_flag=True, help="Drop every store's existing index and re-encode from scratch")
-def index(model, no_fetch, rebuild):
+def index(model, no_fetch, cached_only, rebuild):
     """Sync, fetch, render, and index everything.
 
     Default flow: ``sync pull`` → refs sync → reindex → ``sync push``, so
@@ -227,7 +267,17 @@ def index(model, no_fetch, rebuild):
     published. Per-source failures are logged but don't abort the run.
     Use ``--no-fetch`` to skip every network call. Use ``--rebuild`` to
     force a full re-encode instead of the default incremental update.
+    ``--cached-only`` implies ``--no-fetch`` and verifies the model cache
+    before reading sources or changing an index.
     """
+    if cached_only:
+        effective_model = model or DEFAULT_MODEL
+        try:
+            require_cached_model(effective_model)
+        except ModelCacheMissingError as exc:
+            raise click.ClickException(str(exc)) from exc
+        no_fetch = True
+
     if not no_fetch:
         _sync_pull_for_index()
         from agentkb import references as refs_store

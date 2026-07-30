@@ -2,12 +2,47 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 DEFAULT_MODEL = "lightonai/GTE-ModernColBERT-v1"
 
 # Encoder cache — one instance per model name
 _encoder_cache: dict[str, "ColBERTEncoder"] = {}
+
+
+class ModelCacheMissingError(RuntimeError):
+    """Raised when cached-only operation cannot resolve a model snapshot."""
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        super().__init__(model_cache_recovery(model_name))
+
+
+def model_cache_recovery(model_name: str) -> str:
+    """Return the stable recovery action for a missing cached model."""
+    return (
+        f"Hugging Face model {model_name} is not cached. "
+        f"While online, run `uv run hf download {model_name}`, then retry; "
+        "or use the remote AgentKB path."
+    )
+
+
+def require_cached_model(model_name: str | None = None) -> Path:
+    """Resolve a complete cached Hugging Face snapshot without network access."""
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    effective_model = model_name or DEFAULT_MODEL
+    try:
+        snapshot = snapshot_download(
+            repo_id=effective_model,
+            local_files_only=True,
+        )
+    except LocalEntryNotFoundError as exc:
+        raise ModelCacheMissingError(effective_model) from exc
+    return Path(snapshot)
 
 
 def get_encoder(model_name: str | None = None) -> "ColBERTEncoder":

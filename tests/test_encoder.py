@@ -14,8 +14,15 @@ These tests load the real model so they verify actual behavior, not mocks.
 """
 
 import numpy as np
+import pytest
 
-from agentkb.encoder import get_encoder, ColBERTEncoder, DEFAULT_MODEL
+from agentkb.encoder import (
+    DEFAULT_MODEL,
+    ColBERTEncoder,
+    ModelCacheMissingError,
+    get_encoder,
+    require_cached_model,
+)
 
 
 # get_encoder uses a module-level cache so the model is only loaded once per
@@ -33,6 +40,31 @@ def test_get_encoder_default_model():
     """Default encoder uses the GTE-ModernColBERT model."""
     e = get_encoder()
     assert e.model_name == DEFAULT_MODEL
+
+
+def test_require_cached_model_uses_hugging_face_cached_only(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_snapshot_download(**kwargs):
+        calls.append(kwargs)
+        return str(tmp_path / "snapshot")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+
+    assert require_cached_model("owner/model") == tmp_path / "snapshot"
+    assert calls == [{"repo_id": "owner/model", "local_files_only": True}]
+
+
+def test_require_cached_model_reports_missing_snapshot(monkeypatch):
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    def fake_snapshot_download(**kwargs):
+        raise LocalEntryNotFoundError("not cached")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+
+    with pytest.raises(ModelCacheMissingError, match="owner/model"):
+        require_cached_model("owner/model")
 
 
 # encode_query produces a 2D array: (num_query_tokens, embedding_dim).

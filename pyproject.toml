@@ -1,6 +1,6 @@
 [project]
 name = "agentkb"
-version = "0.3.0"
+version = "0.3.1"
 description = "A unified search and knowledge tool for AI agents and developers"
 readme = "README.md"
 license = "MIT"

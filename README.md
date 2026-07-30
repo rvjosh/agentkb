@@ -188,6 +188,29 @@ artifacts are not written. Do not rebuild an index concurrently with a
 
 Every search is recorded in `~/.agentkb/traceability.db` — the original query, semantic-expanded query, pattern, per-stage rankings (semantic / keyword / RRF), and final results. Useful for evals and for debugging why a result did or didn't surface.
 
+### Cached-only local indexing
+
+Before offline maintenance, check that the ColBERT snapshot is already present:
+
+```bash
+agentkb model-cache
+agentkb model-cache --json
+agentkb model-cache --model lightonai/GTE-ModernColBERT-v1
+```
+
+`agentkb index --cached-only` implies `--no-fetch` and verifies the requested
+`--model` (or the default model) before source discovery, rendering, index
+creation/clearing, or encoding. It never downloads a model. If the cache is
+missing, populate it while online with:
+
+```bash
+uv run hf download lightonai/GTE-ModernColBERT-v1
+```
+
+Then retry cached-only indexing, or use the remote AgentKB path. The diagnostic
+JSON contains only `model`, `cached`, and `recovery`; it never exposes cache
+paths or source content.
+
 ## Consolidation
 
 Turning chat and communications activity into durable wiki pages. Consolidation is an **instruction generator**: agentkb exports the relevant sessions/threads, prints the paths, and prints a prompt the agent acts on. The agent does the synthesis.
