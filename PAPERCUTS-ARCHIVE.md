@@ -1,6 +1,6 @@
 # Papercuts archive
 
-<!-- papercuts-generated-view: {"kind":"archive","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"4ec71847faad2b9b15365f1059b1412ac2e251503576e07a06030debc3e1e4b2","manifestSha256":"b97a27287b705244af6f2150820a8336da8c2f229d14a0431c5054398e82be78","sourceEntryCount":35,"newestSourceTimestamp":"2026-07-30T15:05:54Z"} -->
+<!-- papercuts-generated-view: {"kind":"archive","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"4ec71847faad2b9b15365f1059b1412ac2e251503576e07a06030debc3e1e4b2","manifestSha256":"229bd01a15ec8a83976a8392aa53f01726b93248d7fde511e5188ff6dc3af04d","sourceEntryCount":35,"newestSourceTimestamp":"2026-07-30T15:05:54Z"} -->
 > **Generated — do not edit.** Closed dispositions come from `PAPERCUTS-TRIAGE.json`; raw history remains in `PAPERCUTS-LEDGER.md`.
 
 | ID | Final status | Count / date range | Task | Issue | Owner | Evidence / rationale |

@@ -1,6 +1,6 @@
 # Papercuts live queue
 
-<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"4ec71847faad2b9b15365f1059b1412ac2e251503576e07a06030debc3e1e4b2","manifestSha256":"b97a27287b705244af6f2150820a8336da8c2f229d14a0431c5054398e82be78","sourceEntryCount":35,"newestSourceTimestamp":"2026-07-30T15:05:54Z"} -->
+<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"4ec71847faad2b9b15365f1059b1412ac2e251503576e07a06030debc3e1e4b2","manifestSha256":"229bd01a15ec8a83976a8392aa53f01726b93248d7fde511e5188ff6dc3af04d","sourceEntryCount":35,"newestSourceTimestamp":"2026-07-30T15:05:54Z"} -->
 > **Generated — do not edit.** Run `papercuts refresh`; raw history remains in `PAPERCUTS-LEDGER.md`.
 
 ## Open groups
@@ -27,9 +27,10 @@
 | AKB-PC-022 | open | 1 · 2026-07-27T05:50:34Z | Production-shaped Modal mount and corpus-size fixtures are missing |  | agentkb |
 | AKB-PC-023 | open | 1 · 2026-07-27T10:18:03Z | Fresh worktrees lack a documented dependency bootstrap before Bun tests |  | agentkb |
 | AKB-PC-024 | open | 1 · 2026-07-27T15:17:23Z | TypeScript verification command is not discoverable from the repository root |  | agentkb |
+| AKB-PC-025 | open | 1 · 2026-07-30T15:05:54Z | Schema audits need multiline-safe source enumeration |  | agentkb verification workflow |
 
 ## Untriaged ledger entries
 
 | Entry | Timestamp | Message |
 |---:|---|---|
-| 35 | 2026-07-30T15:05:54Z | Auditing archive-schema contracts with a proximity regex → multiline test values were missed and rg exited 1; prefer enumerating the schema symbol first, then inspect each hit context. |
+| — | — | None |

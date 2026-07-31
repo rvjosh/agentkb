@@ -5,42 +5,60 @@
       "id": "AKB-PC-001",
       "title": "Python test and lint tools are not declared in the project environment",
       "status": "open",
-      "entries": [1, 13, 33],
+      "entries": [
+        1,
+        13,
+        33
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-002",
       "title": "Python and Modal commands lack one canonical project-environment recipe",
       "status": "open",
-      "entries": [2, 7, 18, 19, 29],
+      "entries": [
+        2,
+        7,
+        18,
+        19,
+        29
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-003",
       "title": "Modal fresh-container configuration uses a deprecated option",
       "status": "open",
-      "entries": [3],
+      "entries": [
+        3
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-004",
       "title": "Modal client echoes private raw payloads to stdout",
       "status": "open",
-      "entries": [4],
+      "entries": [
+        4
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-005",
       "title": "Process verification can self-match its own probe",
       "status": "open",
-      "entries": [5],
+      "entries": [
+        5
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-006",
       "title": "Bun blocked-postinstall warning lacks actionable package detail",
       "status": "upstream",
-      "entries": [6],
+      "entries": [
+        6
+      ],
       "owner": "bun",
       "note": "The warning is emitted by Bun during dependency installation; AgentKB cannot add the missing package attribution to Bun's installer output."
     },
@@ -48,28 +66,36 @@
       "id": "AKB-PC-007",
       "title": "Compile verification creates ignored-bytecode cleanup work",
       "status": "open",
-      "entries": [8],
+      "entries": [
+        8
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-008",
       "title": "Injected AgentKbClient fakes duplicate the full interface",
       "status": "open",
-      "entries": [9],
+      "entries": [
+        9
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-009",
       "title": "Production corpus refresh is not memory-bounded",
       "status": "open",
-      "entries": [10],
+      "entries": [
+        10
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-010",
       "title": "Expected rg no-match status stopped unrelated shell checks",
       "status": "accepted",
-      "entries": [11],
+      "entries": [
+        11
+      ],
       "owner": "agent-practice",
       "note": "This was a one-off command-composition mistake rather than durable AgentKB behavior; future probes should not join optional rg checks with &&."
     },
@@ -77,21 +103,29 @@
       "id": "AKB-PC-011",
       "title": "Modal Python images omit cbor2 required by the JavaScript SDK",
       "status": "open",
-      "entries": [12],
+      "entries": [
+        12
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-012",
       "title": "Bounded FastPLAID batches silently freeze first-batch centroids",
       "status": "open",
-      "entries": [14],
+      "entries": [
+        14
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-013",
       "title": "Broad mechanical edits caused transient patch and verification mistakes",
       "status": "accepted",
-      "entries": [15, 16, 27],
+      "entries": [
+        15,
+        16,
+        27
+      ],
       "owner": "agent-practice",
       "note": "The context misses, wrong working directory, and stray line were caught and corrected in the originating sessions; they do not identify one remaining repository defect."
     },
@@ -99,42 +133,54 @@
       "id": "AKB-PC-014",
       "title": "Modal volume inspection lacks a bounded summary recipe",
       "status": "open",
-      "entries": [17],
+      "entries": [
+        17
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-015",
       "title": "Merge recipes assume origin/main instead of the repository default branch",
       "status": "open",
-      "entries": [20],
+      "entries": [
+        20
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-016",
       "title": "GitHub CLI PR creation produced contradictory ref-resolution errors",
       "status": "open",
-      "entries": [21],
+      "entries": [
+        21
+      ],
       "owner": "github-cli"
     },
     {
       "id": "AKB-PC-017",
       "title": "Modal CLI subcommands reject --help",
       "status": "open",
-      "entries": [22],
+      "entries": [
+        22
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-018",
       "title": "Repository root lacks local AGENTS.md guidance",
       "status": "open",
-      "entries": [23],
+      "entries": [
+        23
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-019",
       "title": "Safe cleanup of validated temporary files was blocked",
       "status": "upstream",
-      "entries": [24],
+      "entries": [
+        24
+      ],
       "owner": "command-policy",
       "note": "The rejection came from the execution policy around destructive commands, outside AgentKB; OS cleanup of the unique temporary directory remains the safe workaround."
     },
@@ -142,36 +188,60 @@
       "id": "AKB-PC-020",
       "title": "Bun test discovery depends silently on the working directory",
       "status": "open",
-      "entries": [25],
+      "entries": [
+        25
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-021",
       "title": "repo-sync status requires an explicit target without an obvious discovery path",
       "status": "open",
-      "entries": [26, 28, 32],
+      "entries": [
+        26,
+        28,
+        32
+      ],
       "owner": "repo-sync-admin"
     },
     {
       "id": "AKB-PC-022",
       "title": "Production-shaped Modal mount and corpus-size fixtures are missing",
       "status": "open",
-      "entries": [30],
+      "entries": [
+        30
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-023",
       "title": "Fresh worktrees lack a documented dependency bootstrap before Bun tests",
       "status": "open",
-      "entries": [31],
+      "entries": [
+        31
+      ],
       "owner": "agentkb"
     },
     {
       "id": "AKB-PC-024",
       "title": "TypeScript verification command is not discoverable from the repository root",
       "status": "open",
-      "entries": [34],
+      "entries": [
+        34
+      ],
       "owner": "agentkb"
+    },
+    {
+      "id": "AKB-PC-025",
+      "title": "Schema audits need multiline-safe source enumeration",
+      "status": "open",
+      "entries": [
+        35
+      ],
+      "entryKeys": {
+        "35": "59786227e47eb903b5c4d2c401170458a61fe27a210a9e5da2620937ecfe6bb2"
+      },
+      "owner": "agentkb verification workflow"
     }
   ]
 }
