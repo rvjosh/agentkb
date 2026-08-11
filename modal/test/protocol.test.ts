@@ -178,6 +178,16 @@ test("validates auditable build batch metrics", () => {
     duration_ms: 1,
   };
   expect(validateBuildResult(build).document_batch_count).toBe(3);
+  expect(
+    validateBuildResult({ ...build, staged_embedding_bytes: 4_294_967_296n })
+      .staged_embedding_bytes,
+  ).toBe(4_294_967_296);
+  expect(() =>
+    validateBuildResult({
+      ...build,
+      staged_embedding_bytes: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+    }),
+  ).toThrow(/must be an integer/);
   expect(() =>
     validateBuildResult({ ...build, document_batch_size: 512 }),
   ).toThrow(/must equal 256/);

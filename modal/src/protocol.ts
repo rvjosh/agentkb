@@ -268,7 +268,11 @@ function integerAt(
   minimum = 0,
   maximum = Number.MAX_SAFE_INTEGER,
 ): number {
-  const parsed = finiteNumberAt(value, path);
+  const parsed = typeof value === "bigint"
+    ? value >= BigInt(minimum) && value <= BigInt(Math.min(maximum, Number.MAX_SAFE_INTEGER))
+      ? Number(value)
+      : fail(path, `must be an integer between ${minimum} and ${maximum}`)
+    : finiteNumberAt(value, path);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
     fail(path, `must be an integer between ${minimum} and ${maximum}`);
   }
