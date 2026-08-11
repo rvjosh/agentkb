@@ -1,6 +1,6 @@
 # Papercuts live queue
 
-<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"4ec71847faad2b9b15365f1059b1412ac2e251503576e07a06030debc3e1e4b2","manifestSha256":"229bd01a15ec8a83976a8392aa53f01726b93248d7fde511e5188ff6dc3af04d","sourceEntryCount":35,"newestSourceTimestamp":"2026-07-30T15:05:54Z"} -->
+<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"5a89e439299d2170096e22c7d18c61e80c1ee91d57059c1923d6f2ac5db59576","manifestSha256":"229bd01a15ec8a83976a8392aa53f01726b93248d7fde511e5188ff6dc3af04d","sourceEntryCount":36,"newestSourceTimestamp":"2026-08-11T06:25:29Z"} -->
 > **Generated — do not edit.** Run `papercuts refresh`; raw history remains in `PAPERCUTS-LEDGER.md`.
 
 ## Open groups
@@ -33,4 +33,4 @@
 
 | Entry | Timestamp | Message |
 |---:|---|---|
-| — | — | None |
+| 36 | 2026-08-11T06:25:29Z | AgentKB repair verification → assumed a repo-local bin/agentkb-modal path that does not exist; use the installed PATH command documented in tools-ts |

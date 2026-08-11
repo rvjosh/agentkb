@@ -139,3 +139,7 @@ Verifying the transcript-generation migration → ran AgentKB `bun run typecheck
 ## 2026-07-30T15:05:54Z · unknown · joshuaizzard · agentkb:. · 019fb38d-b2a6-7942-9a0a-c720fb336a39
 
 Auditing archive-schema contracts with a proximity regex → multiline test values were missed and rg exited 1; prefer enumerating the schema symbol first, then inspect each hit context.
+
+## 2026-08-11T06:25:29Z · gpt-5.6-sol · joshuaizzard · agentkb:. · 019fdf52-bcaf-7b63-a648-8ec16aeadf27
+
+AgentKB repair verification → assumed a repo-local bin/agentkb-modal path that does not exist; use the installed PATH command documented in tools-ts
