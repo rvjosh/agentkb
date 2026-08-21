@@ -124,6 +124,7 @@ function dependencies(options: {
   historySyncExit?: number;
   lock?: boolean;
   archiveLock?: boolean;
+  config?: Record<string, unknown>;
 } = {}) {
   const commands: string[][] = [];
   const writes = new Map<string, unknown>();
@@ -136,7 +137,7 @@ function dependencies(options: {
       wikiRoot: wikiPath ?? "/wiki-projection",
       chatsReadableRoot: "/unused/readable",
     }),
-    readConfig: async () => JSON.stringify({}),
+    readConfig: async () => JSON.stringify(options.config ?? {}),
     runCommand: async (args) => {
       commands.push(args);
       const readwise = args.some((arg) => arg.includes("readwise_tweets.py"));
@@ -275,6 +276,81 @@ test("upstream success publishes healthy after backup run and status", async () 
     ["agent-history-sync", "run"],
     ["agent-history-sync", "status"],
   ]);
+});
+
+test("history_sync_route defaults to Air's backup route", async () => {
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    resolveRoots: async () => ({ wikiRoot: "/wiki", chatsReadableRoot: "/unused" }),
+    readConfig: async () => JSON.stringify({}),
+  });
+  expect(registry.historySyncRoute).toBe("mini-admin-to-air-backup");
+
+  const state = dependencies();
+  expect((await makeCurrent(client, undefined, state.deps)).exitCode).toBe(0);
+  expect(state.commands.slice(0, 2)).toEqual([
+    ["agent-history-sync", "run", "mini-admin-to-air-backup", "--json"],
+    [
+      "agent-history-sync",
+      "status",
+      "mini-admin-to-air-backup",
+      "--max-age-minutes",
+      "90",
+      "--json",
+    ],
+  ]);
+});
+
+test("history_sync_route override drives both the run and the status invocation", async () => {
+  const config = { history_sync_route: "mini-admin-to-mini-agent-backup" };
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    resolveRoots: async () => ({ wikiRoot: "/wiki", chatsReadableRoot: "/unused" }),
+    readConfig: async () => JSON.stringify(config),
+  });
+  expect(registry.historySyncRoute).toBe("mini-admin-to-mini-agent-backup");
+  // The mirror the route writes is still the invoking account's own default.
+  expect(registry.backupRoot).toBe(
+    "/home/tester/Library/Application Support/agent-history-backup/mini-admin",
+  );
+
+  const state = dependencies({ config });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(0);
+  expect(result.receipt.health).toBe("healthy");
+  expect(state.commands.slice(0, 2)).toEqual([
+    ["agent-history-sync", "run", "mini-admin-to-mini-agent-backup", "--json"],
+    [
+      "agent-history-sync",
+      "status",
+      "mini-admin-to-mini-agent-backup",
+      "--max-age-minutes",
+      "90",
+      "--json",
+    ],
+  ]);
+  expect(
+    result.receipt.sources.find(
+      (source) => source.source_id === "agent-history-central",
+    )?.operation,
+  ).toContain("mini-admin-to-mini-agent-backup");
+});
+
+test.each([
+  "air-to-mini-admin",
+  "air-backup-to-offsite",
+  "mini-admin-local",
+  "",
+  "mini-admin-to-air-backup; rm -rf /",
+  42,
+])("history_sync_route rejects %p", async (route) => {
+  await expect(
+    resolveSourceRegistry(undefined, {
+      home: "/home/tester",
+      resolveRoots: async () => ({ wikiRoot: "/wiki", chatsReadableRoot: "/unused" }),
+      readConfig: async () => JSON.stringify({ history_sync_route: route }),
+    }),
+  ).rejects.toThrow(/history_sync_route must be one of/);
 });
 
 test("upstream failure publishes degraded only with a valid fallback", async () => {
