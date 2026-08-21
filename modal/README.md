@@ -17,15 +17,44 @@ The normal answer to “refresh AgentKB” or “make it current” is:
 agentkb-modal make-current --json
 ```
 
-The same command runs daily on Air at 04:20 local through
-`com.beckett.agentkb-refresh.air`. It first runs and verifies
-`mini-admin-to-air-backup`, acquires the shared Air archive-generation lock,
-then requires and validates `current.json` plus its selected immutable database
-and provenance catalog under
+The same command runs daily through the `agentkb-refresh` loop. It first runs and
+verifies the agent-history backup route, acquires the invoking account's shared
+archive-generation lock, then requires and validates `current.json` plus its
+selected immutable database and provenance catalog under
 `~/Library/Application Support/agent-history-backup/mini-admin`. The lock stays
 held through the Python export and generation build so erasure cleanup cannot
 race the read. There is no `index.sqlite3.zst` fallback, and the job never fans
 out to live Air, Mini-admin, or Mini-agent transcript roots.
+
+### The source contract is host-aware
+
+`agent-history-sync` names its backup routes after the account that owns the
+mirror the route writes, and both routes pull the same Mini-admin aggregate with
+the same mechanics into the invoking account's own
+`~/Library/Application Support/agent-history-backup/mini-admin`. Which route
+make-current runs therefore depends on which host it runs on:
+
+| Host | `history_sync_route` | Notes |
+| --- | --- | --- |
+| Air | `mini-admin-to-air-backup` (default) | Also feeds Air's independent Dropbox/restic off-site lane |
+| Mini-agent | `mini-admin-to-mini-agent-backup` | Set explicitly in `~/.agentkb/config.json` |
+
+Air's behaviour is the default and is unchanged: omit the key and make-current
+runs `mini-admin-to-air-backup` for both its `run` and its `status` check. On
+Mini-agent, set the route explicitly:
+
+```json
+{
+  "history_sync_route": "mini-admin-to-mini-agent-backup"
+}
+```
+
+Only those two backup routes are accepted; any other value fails the run at
+config resolution rather than reaching a subprocess. The mirror path itself is
+**not** host-specific — it is the same relative path under each account's own
+home, so erasure, AgentKB, and the off-site lane all reason about one mirror
+layout. Do not schedule the two routes to overlap: they share one Mini-admin-side
+staging directory and there is no Mini-admin-side lock serialising them.
 
 Source modes are `upstream`, `projection`, `human-dependent`, and
 `disabled-costly`. Readwise Tweets and GitHub Stars are the only wiki upstream
@@ -41,6 +70,11 @@ run and `last-success.json` supplies the prior counts used by the conservative
 50% collapse guard (configurable with
 `make_current.collapse_ratio` in `~/.agentkb/config.json`). The PID-aware lock
 covers the complete run; live overlap exits 75 without source work.
+
+`~/.agentkb/config.json` keys read by make-current: `wiki_cwd`,
+`source_paths.<source-id>`, `make_current.collapse_ratio`,
+`make_current.outer_timeout_minutes`, and `history_sync_route` (see above). All
+are optional; every one has a deterministic default.
 
 Deploy the private app with the pinned Modal Python client:
 

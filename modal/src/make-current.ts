@@ -37,6 +37,20 @@ export const DEFAULT_COLLAPSE_RATIO = 0.5;
 export const DEFAULT_OUTER_TIMEOUT_MS = 5 * 60 * 60_000;
 export const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60_000;
 export const BACKUP_FRESHNESS_MINUTES = 90;
+
+// The backup route that produces the immutable agent-history generation this
+// build consumes. `agent-history-sync` names the route after the account that
+// owns the mirror it writes, so the correct value depends on which host runs
+// make-current: Air keeps the default, mini-agent sets `history_sync_route` in
+// ~/.agentkb/config.json. Only these two backup routes may ever be named here —
+// every other route either collects transcripts or writes off-site snapshots,
+// and neither produces the mirror we read.
+export const DEFAULT_HISTORY_SYNC_ROUTE = "mini-admin-to-air-backup";
+export const HISTORY_SYNC_ROUTES = [
+  "mini-admin-to-air-backup",
+  "mini-admin-to-mini-agent-backup",
+] as const;
+export type HistorySyncRoute = (typeof HISTORY_SYNC_ROUTES)[number];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const ARCHIVE_POINTER_SCHEMA = 1;
 const ARCHIVE_SCHEMA = 5;
@@ -72,6 +86,7 @@ export interface SourceRegistry {
   wikiRoot: string;
   wikiCwd: string;
   backupRoot: string;
+  historySyncRoute: HistorySyncRoute;
   collapseRatio: number;
   outerTimeoutMs: number;
   sources: SourceRegistryEntry[];
@@ -233,6 +248,17 @@ export async function resolveSourceRegistry(
   if (!Number.isFinite(outerTimeoutMinutes) || outerTimeoutMinutes < 300) {
     throw new TypeError("make_current.outer_timeout_minutes must be at least 300");
   }
+  const configuredRoute = config.history_sync_route;
+  if (
+    configuredRoute !== undefined &&
+    !(HISTORY_SYNC_ROUTES as readonly unknown[]).includes(configuredRoute)
+  ) {
+    throw new TypeError(
+      `history_sync_route must be one of: ${HISTORY_SYNC_ROUTES.join(", ")}`,
+    );
+  }
+  const historySyncRoute =
+    (configuredRoute as HistorySyncRoute | undefined) ?? DEFAULT_HISTORY_SYNC_ROUTE;
 
   const generated = join(dependencies.home, "home", "llm-wiki-generated");
   const readwise = sourceOverride(
@@ -269,6 +295,7 @@ export async function resolveSourceRegistry(
     wikiRoot,
     wikiCwd,
     backupRoot: backup,
+    historySyncRoute,
     collapseRatio,
     outerTimeoutMs: outerTimeoutMinutes * 60_000,
     sources: [
@@ -905,13 +932,13 @@ export async function makeCurrent(
     const syncArgs = [
       "agent-history-sync",
       "run",
-      "mini-admin-to-air-backup",
+      registry.historySyncRoute,
       "--json",
     ];
     const statusArgs = [
       "agent-history-sync",
       "status",
-      "mini-admin-to-air-backup",
+      registry.historySyncRoute,
       "--max-age-minutes",
       String(BACKUP_FRESHNESS_MINUTES),
       "--json",
