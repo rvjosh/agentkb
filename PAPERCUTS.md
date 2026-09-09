@@ -1,6 +1,6 @@
 # Papercuts live queue
 
-<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"5a89e439299d2170096e22c7d18c61e80c1ee91d57059c1923d6f2ac5db59576","manifestSha256":"229bd01a15ec8a83976a8392aa53f01726b93248d7fde511e5188ff6dc3af04d","sourceEntryCount":36,"newestSourceTimestamp":"2026-08-11T06:25:29Z"} -->
+<!-- papercuts-generated-view: {"kind":"active","ledger":"PAPERCUTS-LEDGER.md","manifest":"PAPERCUTS-TRIAGE.json","ledgerSha256":"5a89e439299d2170096e22c7d18c61e80c1ee91d57059c1923d6f2ac5db59576","manifestSha256":"62dc8a2e39cf0aab78bd435981c2406b1b862e8c02aea842015c07a07d09674b","sourceEntryCount":36,"newestSourceTimestamp":"2026-08-11T06:25:29Z"} -->
 > **Generated — do not edit.** Run `papercuts refresh`; raw history remains in `PAPERCUTS-LEDGER.md`.
 
 ## Open groups
@@ -8,7 +8,7 @@
 | ID | Status | Count / date range | Task | Issue | Owner |
 |---|---|---|---|---|---|
 | AKB-PC-001 | open | 3 · 2026-07-25T06:32:24Z — 2026-07-27T15:07:12Z | Python test and lint tools are not declared in the project environment |  | agentkb |
-| AKB-PC-002 | open | 5 · 2026-07-25T07:46:51Z — 2026-07-27T05:42:20Z | Python and Modal commands lack one canonical project-environment recipe |  | agentkb |
+| AKB-PC-002 | open | 6 · 2026-07-25T07:46:51Z — 2026-08-11T06:25:29Z | Python and Modal commands lack one canonical project-environment recipe |  | agentkb |
 | AKB-PC-003 | open | 1 · 2026-07-25T07:49:26Z | Modal fresh-container configuration uses a deprecated option |  | agentkb |
 | AKB-PC-004 | open | 1 · 2026-07-25T08:02:17Z | Modal client echoes private raw payloads to stdout |  | agentkb |
 | AKB-PC-005 | open | 1 · 2026-07-25T08:20:33Z | Process verification can self-match its own probe |  | agentkb |
@@ -33,4 +33,4 @@
 
 | Entry | Timestamp | Message |
 |---:|---|---|
-| 36 | 2026-08-11T06:25:29Z | AgentKB repair verification → assumed a repo-local bin/agentkb-modal path that does not exist; use the installed PATH command documented in tools-ts |
+| — | — | None |

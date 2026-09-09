@@ -21,9 +21,18 @@
         7,
         18,
         19,
-        29
+        29,
+        36
       ],
-      "owner": "agentkb"
+      "owner": "agentkb",
+      "entryKeys": {
+        "2": "901fef4d1de005acebea4c40e7ffe2cacb3053ff19427f75b053dd617794e72b",
+        "7": "7d41f208fa1ae4695fe6e26f5253ad57d9dca212de5ee0c139a305efaa8b6e5d",
+        "18": "f4dd2f208bb772f24dcb12026639ff049bea239af5c3e0344b1aa4f47259f36e",
+        "19": "4d2bfefb406cf0918ed9c4293a67572c7330f2c95223bf5f78b8ae6a973258a8",
+        "29": "a3a474ab338b5801ef0e801a224c15d728b365e86f172c1869553e93698fbe3b",
+        "36": "1b127ca4d61d7c4c24f0476ed92bcd8376837b519acac6fcaf1ba38e1e98ff07"
+      }
     },
     {
       "id": "AKB-PC-003",
