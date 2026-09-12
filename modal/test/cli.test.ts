@@ -579,7 +579,7 @@ test("generation deletion is dry-run first and force is explicit", async () => {
 
 test("generation erasure rejects incomplete or unsafe CLI input locally", async () => {
   for (const args of [
-    ["find-session", "--source", "pi", "--session-id", "session-1"],
+    ["find-session", "--source", "unsupported", "--session-id", "session-1"],
     [
       "delete-generation",
       "--generation-id",

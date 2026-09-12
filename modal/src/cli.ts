@@ -87,7 +87,7 @@ export function usage(): string {
     "Usage:",
     "  agentkb-modal status",
     "  agentkb-modal generations --json",
-    "  agentkb-modal find-session --source <claude|codex> --session-id <id> --json",
+    "  agentkb-modal find-session --source <claude|codex|cursor|pi|opencode|openclaw> --session-id <id> --json",
     "  agentkb-modal delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb-modal delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb-modal warm",

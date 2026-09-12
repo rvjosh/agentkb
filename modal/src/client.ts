@@ -30,7 +30,7 @@ import { localPath, type PathRoots } from "./refresh";
 export interface AgentKbClient {
   status(): Promise<StatusResponse>;
   generations(): Promise<GenerationInventory>;
-  findSession(source: "claude" | "codex", sessionId: string): Promise<SessionPresenceResult>;
+  findSession(source: "claude" | "codex" | "cursor" | "pi" | "opencode" | "openclaw", sessionId: string): Promise<SessionPresenceResult>;
   deleteGeneration(
     generationId: string,
     targetType: GenerationTargetType,
@@ -78,7 +78,7 @@ export class ModalAgentKbClient implements AgentKbClient {
   }
 
   async findSession(
-    source: "claude" | "codex",
+    source: "claude" | "codex" | "cursor" | "pi" | "opencode" | "openclaw",
     sessionId: string,
   ): Promise<SessionPresenceResult> {
     const exactSource = validateSessionSource(source);

@@ -223,5 +223,5 @@ test("generation erasure methods validate and route only private SDK calls", asy
       [ID, "staged", CURRENT_ID, false, "test", "privacy", null],
     ],
   ]);
-  expect(client.findSession("pi" as "codex", "session-1")).rejects.toThrow();
+  expect(client.findSession("unsupported" as "codex", "session-1")).rejects.toThrow();
 });

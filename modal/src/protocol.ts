@@ -194,7 +194,7 @@ export interface GenerationInventory {
 
 export interface SessionPresenceResult {
   schema: 1;
-  source: "claude" | "codex";
+  source: "claude" | "codex" | "cursor" | "pi" | "opencode" | "openclaw";
   session_id: string;
   canonical_file: string;
   results: Array<GenerationInventoryItem & {
@@ -300,9 +300,9 @@ export function validateGenerationId(value: unknown): string {
   return generationId;
 }
 
-export function validateSessionSource(value: unknown): "claude" | "codex" {
-  if (value !== "claude" && value !== "codex") {
-    fail("source", "must be exactly claude or codex");
+export function validateSessionSource(value: unknown): "claude" | "codex" | "cursor" | "pi" | "opencode" | "openclaw" {
+  if (value !== "claude" && value !== "codex" && value !== "cursor" && value !== "pi" && value !== "opencode" && value !== "openclaw") {
+    fail("source", "must be claude, codex, cursor, pi, opencode, or openclaw");
   }
   return value;
 }
