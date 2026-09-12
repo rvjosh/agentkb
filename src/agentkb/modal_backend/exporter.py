@@ -37,7 +37,7 @@ MANIFEST_FILENAME = "manifest.json"
 COLLECTIONS = ("chats", "wiki", "wiki:source")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHIVE_POINTER_SCHEMA = 1
-HISTORY_ARCHIVE_SCHEMAS = {5, 6, 7}
+HISTORY_ARCHIVE_SCHEMAS = {5, 6, 7, 8}
 
 
 def _sanitize_json_strings(value: Any) -> Any:
@@ -501,13 +501,13 @@ def _history_records(
                 raise ValueError(
                     "central history snapshot has a malformed schema version"
                 ) from exc
-        if schema_version not in {1, 2, 3, 4, 5, 6, 7}:
+        if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8}:
             raise ValueError(
                 f"unsupported central history schema version: {schema_version}"
             )
         sessions_relation = (
             "publication_eligible_sessions"
-            if schema_version in {2, 3, 4, 5, 6, 7}
+            if schema_version in {2, 3, 4, 5, 6, 7, 8}
             else "transcripts"
         )
         rows = connection.execute(
@@ -554,7 +554,7 @@ def _history_records(
                 raise FileNotFoundError(f"central history blob is missing: {blob}")
             stored_file = f"agent-history-central/{source}/{session_id}.md"
             session_key = f"{source}/{session_id}"
-            if source in {"cursor", "pi", "opencode"}:
+            if source in {"cursor", "pi", "opencode", "openclaw"}:
                 # The archive already owns native parsing and visible-text rules.
                 # Still verify the referenced immutable raw bytes before export.
                 for _ in _iter_history_messages(source, blob, str(row["sha256"])):

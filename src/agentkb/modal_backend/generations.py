@@ -23,7 +23,7 @@ MAX_STAGED_CORPUS_BYTES = 512 * 1024 * 1024
 MAX_STAGED_RECORDS = 1_000_000
 MAX_STAGED_LINE_BYTES = 4 * 1024 * 1024
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
-SOURCES = {"claude", "codex", "cursor", "pi", "opencode"}
+SOURCES = {"claude", "codex", "cursor", "pi", "opencode", "openclaw"}
 
 
 def validate_generation_id(value: object) -> str:

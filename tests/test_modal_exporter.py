@@ -465,7 +465,7 @@ def test_central_history_accepts_schema_v5_query_contract(tmp_path):
     assert list(exporter._history_records(backup)) == []
 
 
-@pytest.mark.parametrize("schema_version", [0, 8, 999])
+@pytest.mark.parametrize("schema_version", [0, 9, 999])
 def test_central_history_rejects_unknown_or_newer_schema(tmp_path, schema_version):
     backup = tmp_path / f"backup-{schema_version}"
     backup.mkdir()
@@ -534,7 +534,7 @@ def publish_history_generation(backup, database, *, archive_schema=5):
 
 @pytest.mark.parametrize(
     ("archive_schema", "accepted"),
-    [(4, False), (5, True), (6, True), (7, True), (8, False)],
+    [(4, False), (5, True), (6, True), (7, True), (8, True), (9, False)],
 )
 def test_history_generation_requires_archive_schema_5(
     tmp_path, archive_schema, accepted
@@ -585,7 +585,7 @@ def test_history_generation_requires_pointer_and_validates_catalog(tmp_path):
         exporter._load_history_pointer(backup)
 
 
-@pytest.mark.parametrize('source', ['cursor', 'pi', 'opencode'])
+@pytest.mark.parametrize('source', ['cursor', 'pi', 'opencode', 'openclaw'])
 def test_schema7_exports_archive_visible_events_for_new_sources(tmp_path, source):
     backup=tmp_path/'backup';database=tmp_path/'index.sqlite3'
     raw=json.dumps({'native':'preserved but never indexed as prose'}).encode()+b'\n'
