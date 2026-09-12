@@ -465,7 +465,7 @@ def test_central_history_accepts_schema_v5_query_contract(tmp_path):
     assert list(exporter._history_records(backup)) == []
 
 
-@pytest.mark.parametrize("schema_version", [0, 6, 999])
+@pytest.mark.parametrize("schema_version", [0, 8, 999])
 def test_central_history_rejects_unknown_or_newer_schema(tmp_path, schema_version):
     backup = tmp_path / f"backup-{schema_version}"
     backup.mkdir()
@@ -534,7 +534,7 @@ def publish_history_generation(backup, database, *, archive_schema=5):
 
 @pytest.mark.parametrize(
     ("archive_schema", "accepted"),
-    [(4, False), (5, True), (6, False)],
+    [(4, False), (5, True), (6, True), (7, True), (8, False)],
 )
 def test_history_generation_requires_archive_schema_5(
     tmp_path, archive_schema, accepted
@@ -554,7 +554,7 @@ def test_history_generation_requires_archive_schema_5(
 
     if accepted:
         pointer, _, _ = exporter._load_history_pointer(backup)
-        assert pointer["archiveSchema"] == 5
+        assert pointer["archiveSchema"] == archive_schema
     else:
         with pytest.raises(ValueError, match="schema is invalid"):
             exporter._load_history_pointer(backup)
@@ -583,3 +583,38 @@ def test_history_generation_requires_pointer_and_validates_catalog(tmp_path):
     os.chmod(catalog, 0o600)
     with pytest.raises(ValueError, match="size mismatch|catalog hash mismatch"):
         exporter._load_history_pointer(backup)
+
+
+@pytest.mark.parametrize('source', ['cursor', 'pi', 'opencode'])
+def test_schema7_exports_archive_visible_events_for_new_sources(tmp_path, source):
+    backup=tmp_path/'backup';database=tmp_path/'index.sqlite3'
+    raw=json.dumps({'native':'preserved but never indexed as prose'}).encode()+b'\n'
+    digest=hashlib.sha256(raw).hexdigest()
+    relative=f'raw/{source}/{digest[:2]}/{digest}.json'
+    native=tmp_path/'native.json';native.write_bytes(raw)
+    blob=backup/(relative+'.zst');blob.parent.mkdir(parents=True)
+    subprocess.run(['zstd','-q','-o',str(blob),str(native)],check=True)
+    with sqlite3.connect(database) as connection:
+        connection.executescript('''
+          CREATE TABLE schema_meta(key TEXT PRIMARY KEY,value TEXT);
+          INSERT INTO schema_meta VALUES ('schema_version','7');
+          CREATE TABLE transcripts(id INTEGER PRIMARY KEY,source TEXT,native_session_id TEXT,created_at TEXT);
+          CREATE TABLE versions(sha256 TEXT,transcript_id INTEGER,blob_path TEXT,parser_status TEXT,title TEXT,cwd TEXT,start_time TEXT,end_time TEXT,created_at TEXT);
+          CREATE TABLE observations(version_sha256 TEXT,present_at_last_scan INTEGER);
+          CREATE TABLE events(version_sha256 TEXT,ordinal INTEGER,role TEXT,text TEXT,timestamp TEXT);
+          CREATE VIEW publication_eligible_sessions AS SELECT * FROM transcripts;
+        ''')
+        connection.execute('INSERT INTO transcripts VALUES (1,?,?,?)',(source,'test-session','2026-09-12'))
+        connection.execute('INSERT INTO versions VALUES (?,1,?,\'ok\',\'test\',\'/project\',NULL,NULL,\'2026-09-12\')',(digest,relative))
+        connection.execute('INSERT INTO observations VALUES (?,1)',(digest,))
+        connection.execute('INSERT INTO events VALUES (?,0,\'user\',\'visible indexed question\',NULL)',(digest,))
+    publish_history_generation(backup,database,archive_schema=7)
+    records=list(exporter._history_records(backup))
+    assert len(records)==1
+    assert records[0][0]==source+'/test-session'
+    assert records[0][1]['raw_content']=='visible indexed question'
+    assert source in records[0][1]['tags']
+    # Integrity is checked before publishing indexed text.
+    blob.write_bytes(b'corrupt')
+    with pytest.raises((RuntimeError,ValueError)):
+        list(exporter._history_records(backup))

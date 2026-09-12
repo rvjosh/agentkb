@@ -37,7 +37,7 @@ MANIFEST_FILENAME = "manifest.json"
 COLLECTIONS = ("chats", "wiki", "wiki:source")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHIVE_POINTER_SCHEMA = 1
-HISTORY_ARCHIVE_SCHEMA = 5
+HISTORY_ARCHIVE_SCHEMAS = {5, 6, 7}
 
 
 def _sanitize_json_strings(value: Any) -> Any:
@@ -378,7 +378,7 @@ def _load_history_pointer(backup_root: Path) -> tuple[dict[str, Any], Path, Path
     )
     if (
         pointer.get("schemaVersion") != ARCHIVE_POINTER_SCHEMA
-        or pointer.get("archiveSchema") != HISTORY_ARCHIVE_SCHEMA
+        or pointer.get("archiveSchema") not in HISTORY_ARCHIVE_SCHEMAS
         or pointer.get("catalogSchema") != 1
         or not isinstance(pointer.get("sqliteRuntimeVersion"), str)
         or any(
@@ -501,13 +501,13 @@ def _history_records(
                 raise ValueError(
                     "central history snapshot has a malformed schema version"
                 ) from exc
-        if schema_version not in {1, 2, 3, 4, 5}:
+        if schema_version not in {1, 2, 3, 4, 5, 6, 7}:
             raise ValueError(
                 f"unsupported central history schema version: {schema_version}"
             )
         sessions_relation = (
             "publication_eligible_sessions"
-            if schema_version in {2, 3, 4, 5}
+            if schema_version in {2, 3, 4, 5, 6, 7}
             else "transcripts"
         )
         rows = connection.execute(
@@ -543,7 +543,6 @@ def _history_records(
             ORDER BY source, native_session_id
             """
         ).fetchall()
-        connection.close()
         for row in rows:
             source = str(row["source"])
             session_id = str(row["native_session_id"])
@@ -555,10 +554,18 @@ def _history_records(
                 raise FileNotFoundError(f"central history blob is missing: {blob}")
             stored_file = f"agent-history-central/{source}/{session_id}.md"
             session_key = f"{source}/{session_id}"
-            for ordinal, (role, text, timestamp) in enumerate(
-                _iter_history_messages(source, blob, str(row["sha256"])),
-                start=1,
-            ):
+            if source in {"cursor", "pi", "opencode"}:
+                # The archive already owns native parsing and visible-text rules.
+                # Still verify the referenced immutable raw bytes before export.
+                for _ in _iter_history_messages(source, blob, str(row["sha256"])):
+                    pass
+                messages = ((str(event["role"]), str(event["text"]), str(event["timestamp"] or ""))
+                    for event in connection.execute(
+                        "SELECT role,text,timestamp FROM events WHERE version_sha256=? ORDER BY ordinal",
+                        (row["sha256"],)))
+            else:
+                messages = _iter_history_messages(source, blob, str(row["sha256"]))
+            for ordinal, (role, text, timestamp) in enumerate(messages, start=1):
                 section = f"message-{ordinal:06d}"
                 metadata = [
                     f"Source: {source}",
@@ -588,6 +595,8 @@ def _history_records(
                 record["canonical_id"] = _canonical_id(record)
                 yield session_key, record
     finally:
+        if "connection" in locals():
+            connection.close()
         database_path.unlink(missing_ok=True)
 
 
