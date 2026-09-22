@@ -133,8 +133,12 @@ function dependencies(options: {
   lock?: boolean;
   archiveLock?: boolean;
   config?: Record<string, unknown>;
+  // Paths that do not exist. A scan reports zero only when every one of its
+  // roots is missing, matching how the real recursive scan behaves.
+  missingPaths?: string[];
 } = {}) {
   const commands: string[][] = [];
+  const scans: string[][] = [];
   const writes = new Map<string, unknown>();
   let now = Date.parse("2026-07-26T12:00:00Z");
   const deps: MakeCurrentDependencies = {
@@ -199,7 +203,11 @@ function dependencies(options: {
       };
     },
     scan: async (roots) => ({
-      count: roots.some((root) => root.includes("readwise-tweets"))
+      count: roots.every((root) =>
+        (options.missingPaths ?? []).includes(root),
+      )
+        ? 0
+        : roots.some((root) => root.includes("readwise-tweets"))
         ? options.readwiseCount ?? 3
         : roots.some((root) => root.includes("current.json"))
         ? 4
@@ -257,7 +265,12 @@ function dependencies(options: {
     },
     refreshDependencies: {} as MakeCurrentDependencies["refreshDependencies"],
   };
-  return { deps, commands, writes };
+  const scanning = deps.scan;
+  deps.scan = async (roots, scanOptions) => {
+    scans.push(roots);
+    return scanning(roots, scanOptions);
+  };
+  return { deps, commands, scans, writes };
 }
 
 test("source registry has deterministic defaults and path overrides", async () => {
@@ -699,4 +712,132 @@ test("git remote matching accepts ssh and https forms of the same repo", () => {
   ]) {
     expect(gitRemoteMatches(url, "rvjosh/muse-notes")).toBe(false);
   }
+});
+
+test("github-stars is represented by the wiki catalog and the external snapshot", async () => {
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    resolveRoots: async () => ({
+      wikiRoot: "/wiki",
+      chatsReadableRoot: "/unused",
+    }),
+    readConfig: async () => JSON.stringify({}),
+  });
+  const stars = registry.sources.find(
+    (source) => source.sourceId === "github-stars",
+  );
+  expect(stars?.representedPaths).toEqual([
+    "/wiki/wiki/note-github-starred-repositories.md",
+    "/home/tester/home/llm-wiki-generated/github-stars/starred-repos.json",
+  ]);
+  // The snapshot no longer arrives through the wiki `sources/` projection.
+  expect(
+    stars?.representedPaths?.some((path) => path.includes("/wiki/sources/")),
+  ).toBeFalse();
+});
+
+test("source_paths can relocate the github-stars snapshot", async () => {
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    resolveRoots: async () => ({
+      wikiRoot: "/wiki",
+      chatsReadableRoot: "/unused",
+    }),
+    readConfig: async () =>
+      JSON.stringify({ source_paths: { "github-stars": "~/custom/stars" } }),
+  });
+  expect(
+    registry.sources.find((source) => source.sourceId === "github-stars")
+      ?.representedPaths?.[1],
+  ).toBe("/home/tester/custom/stars/starred-repos.json");
+});
+
+test("youtube-saved requires the external snapshot without counting it", async () => {
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    resolveRoots: async () => ({
+      wikiRoot: "/wiki",
+      chatsReadableRoot: "/unused",
+    }),
+    readConfig: async () => JSON.stringify({}),
+  });
+  const youtube = registry.sources.find(
+    (source) => source.sourceId === "youtube-saved",
+  );
+  expect(youtube?.requiredFiles).toEqual([
+    "/home/tester/home/llm-wiki-generated/youtube-playlists/saved-videos.json",
+  ]);
+  // The counted scan still starts from the source root, so the snapshot's
+  // presence check cannot inflate or deflate source_file_count.
+  expect(youtube?.representedPaths).toBeUndefined();
+  expect(youtube?.root).toBe(
+    "/home/tester/home/llm-wiki-generated/youtube-playlists",
+  );
+});
+
+test("a missing youtube snapshot refuses publication", async () => {
+  const snapshot =
+    "/home/tester/home/llm-wiki-generated/youtube-playlists/saved-videos.json";
+  const state = dependencies({ missingPaths: [snapshot] });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.published).toBeFalse();
+  expect(result.receipt.error).toBe(
+    `youtube-saved required snapshot is missing: ${snapshot}`,
+  );
+});
+
+test("a present youtube snapshot leaves the published file count untouched", async () => {
+  const state = dependencies();
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(0);
+  const youtube = result.receipt.sources.find(
+    (source) => source.source_id === "youtube-saved",
+  );
+  // The stub scan reports 3 for the source root; the extra snapshot check is a
+  // separate scan and must not be added in.
+  expect(youtube?.source_file_count).toBe(3);
+  expect(state.scans).toContainEqual([
+    "/home/tester/home/llm-wiki-generated/youtube-playlists/saved-videos.json",
+  ]);
+  expect(state.scans).toContainEqual([
+    "/wiki-projection/wiki/note-github-starred-repositories.md",
+    "/home/tester/home/llm-wiki-generated/github-stars/starred-repos.json",
+  ]);
+});
+
+test("github-stars requires its external snapshot alongside the catalog page", async () => {
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    resolveRoots: async () => ({
+      wikiRoot: "/wiki",
+      chatsReadableRoot: "/unused",
+    }),
+    readConfig: async () => JSON.stringify({}),
+  });
+  expect(
+    registry.sources.find((source) => source.sourceId === "github-stars")
+      ?.requiredFiles,
+  ).toEqual([
+    "/home/tester/home/llm-wiki-generated/github-stars/starred-repos.json",
+  ]);
+});
+
+test("a missing github-stars snapshot refuses publication even though the catalog page remains", async () => {
+  const snapshot =
+    "/home/tester/home/llm-wiki-generated/github-stars/starred-repos.json";
+  const state = dependencies({ missingPaths: [snapshot] });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.published).toBeFalse();
+  expect(result.receipt.error).toBe(
+    `github-stars required snapshot is missing: ${snapshot}`,
+  );
+  // The counted scan still saw the catalog page, so "durable projection is
+  // empty" would never have fired on its own.
+  const stars = result.receipt.sources.find(
+    (source) => source.source_id === "github-stars",
+  );
+  expect(stars?.source_file_count).toBeGreaterThan(0);
+  expect(stars?.state).toBe("failed");
 });

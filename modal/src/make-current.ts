@@ -224,6 +224,9 @@ export interface SourceRegistryEntry {
   required: boolean;
   exportRoots: SourceExportRoot[];
   representedPaths?: string[];
+  // Files that must exist for the source to be publishable but that must not
+  // contribute to source_file_count.
+  requiredFiles?: string[];
 }
 
 export interface SourceRegistry {
@@ -417,6 +420,15 @@ export async function resolveSourceRegistry(
     join(generated, "youtube-playlists"),
     dependencies.home,
   );
+  // The starred-repo snapshot left the wiki repo for the generated root; the
+  // wiki still owns the rendered catalog page, so this source stays split
+  // across `wikiRoot/wiki` and this directory.
+  const githubStars = sourceOverride(
+    config,
+    "github-stars",
+    join(generated, "github-stars"),
+    dependencies.home,
+  );
   const historical = sourceOverride(
     config,
     "historical-chat-exports",
@@ -488,8 +500,11 @@ export async function resolveSourceRegistry(
         exportRoots: [],
         representedPaths: [
           join(wikiRoot, "wiki", "note-github-starred-repositories.md"),
-          join(wikiRoot, "sources", "github-stars", "starred-repos.json"),
+          join(githubStars, "starred-repos.json"),
         ],
+        // The catalog page alone keeps the counted scan above zero, so a
+        // missing snapshot would otherwise publish as fresh. Check it directly.
+        requiredFiles: [join(githubStars, "starred-repos.json")],
       },
       {
         sourceId: "youtube-saved",
@@ -511,6 +526,10 @@ export async function resolveSourceRegistry(
             include: ["watch-history-latest.jsonl", "watch-later-latest.jsonl"],
           },
         ],
+        // `includeInScan` deliberately keeps saved-videos.json out of
+        // source_file_count (that count tracks summaries and playlist JSONL),
+        // so validate the snapshot's presence separately instead.
+        requiredFiles: [join(youtube, "saved-videos.json")],
       },
       {
         sourceId: "historical-chat-exports",
@@ -1203,8 +1222,20 @@ export async function makeCurrent(
       });
       const commandFailed = commandResult !== null && commandResult.exitCode !== 0;
       const empty = scanned.count === 0;
+      let missingRequired: string | null = null;
+      for (const required of entry.requiredFiles ?? []) {
+        const present = await dependencies.scan([required], {
+          include: () => true,
+        });
+        if (present.count === 0) {
+          missingRequired =
+            `${entry.sourceId} required snapshot is missing: ${required}`;
+          break;
+        }
+      }
       const error =
         gitIdentityError ??
+        missingRequired ??
         (empty && entry.required
           ? `${entry.sourceId} durable projection is empty`
           : null);
