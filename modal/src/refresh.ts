@@ -121,6 +121,11 @@ export async function resolvePathRoots(
       "chat-exports",
       "qmd-docs",
     ),
+    // Notes repos published straight from their git checkouts. Search hits must
+    // localize back to the real working copy so an agent can open and edit the
+    // file, not a read-only mirror.
+    "muse-notes/": join(home, "home", "llm-wiki-projects", "muse-notes"),
+    "grok-bot-notes/": join(home, "home", "llm-wiki-projects", "grok-bot-notes"),
   };
   const externalRoots = Object.fromEntries(
     Object.entries(externalDefaults).map(([prefix, fallback]) => {

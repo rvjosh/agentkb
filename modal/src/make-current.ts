@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 
 import type { AgentKbClient } from "./client";
 import {
@@ -53,7 +53,151 @@ export const HISTORY_SYNC_ROUTES = [
 export type HistorySyncRoute = (typeof HISTORY_SYNC_ROUTES)[number];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const ARCHIVE_POINTER_SCHEMA = 1;
-const ARCHIVE_SCHEMA = 5;
+// Central-history archive schemas this launcher will publish from. Must stay in
+// lockstep with HISTORY_ARCHIVE_SCHEMAS in src/agentkb/modal_backend/exporter.py:
+// this gate runs first, so a schema accepted there but missing here fails the
+// whole run before the exporter is ever reached. The number describes the
+// archive's interior, which only the exporter reads; everything validated below
+// is pointer shape plus hash/size/permission integrity, which is schema-independent.
+const HISTORY_ARCHIVE_SCHEMAS: ReadonlySet<number> = new Set([5, 6, 7, 8]);
+
+// Sources published straight from a local git checkout of an external notes
+// repo, replacing the stale wiki-side mirrors under `sources/refs/<id>/` (the
+// matching skip is make_wiki_spec in src/agentkb/wiki/parser.py).
+//
+// `repo` is the owner/name the checkout's origin must resolve to. Without that
+// check a stray `source_paths` entry pointing at any directory containing
+// markdown would publish under this source id, and a failed `git pull` there
+// would look like an ordinary degraded refresh instead of misconfiguration.
+export const GIT_BACKED_SOURCES: readonly { sourceId: string; repo: string }[] = [
+  { sourceId: "muse-notes", repo: "rvjosh/muse-notes" },
+  { sourceId: "grok-bot-notes", repo: "rvjosh/grok-bot-notes" },
+];
+
+export const GIT_BACKED_SOURCE_IDS: readonly string[] = GIT_BACKED_SOURCES.map(
+  (source) => source.sourceId,
+);
+
+export function isGitBackedSource(sourceId: string): boolean {
+  return GIT_BACKED_SOURCE_IDS.includes(sourceId);
+}
+
+function normalizeGitRemote(url: string): string {
+  return url
+    .trim()
+    .replace(/^ssh:\/\//, "")
+    .replace(/^git@([^:]+):/, "$1/")
+    .replace(/^https?:\/\//, "")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+export function gitRemoteMatches(actual: string, expectedRepo: string): boolean {
+  const normalized = normalizeGitRemote(actual);
+  return (
+    normalized === expectedRepo.toLowerCase() ||
+    normalized.endsWith(`/${expectedRepo.toLowerCase()}`)
+  );
+}
+
+interface GitRefreshOutcome {
+  operation: string;
+  commandResult: CommandResult | null;
+  // Set when the checkout is not the repository we expect. Unlike a failed
+  // fetch this is never publishable: it means source_paths is misconfigured,
+  // so the run fails loudly rather than exporting whatever is on disk.
+  identityError: string | null;
+}
+
+async function refreshGitBackedSource(
+  entry: SourceRegistryEntry,
+  dependencies: MakeCurrentDependencies,
+): Promise<GitRefreshOutcome> {
+  const expected = GIT_BACKED_SOURCES.find(
+    (source) => source.sourceId === entry.sourceId,
+  )!;
+  const run = (args: string[]) =>
+    dependencies.runCommand(args, { timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS });
+
+  const topLevelArgs = ["git", "-C", entry.root, "rev-parse", "--show-toplevel"];
+  const topLevel = await run(topLevelArgs);
+  const operation = topLevelArgs.join(" ");
+  if (topLevel.exitCode !== 0) {
+    return {
+      operation,
+      commandResult: null,
+      identityError: `${entry.sourceId} root is not a git checkout: ${entry.root}`,
+    };
+  }
+  if (resolve(topLevel.stdout.trim()) !== resolve(entry.root)) {
+    return {
+      operation,
+      commandResult: null,
+      identityError:
+        `${entry.sourceId} root is not the repository root: ${entry.root}`,
+    };
+  }
+  const remoteArgs = ["git", "-C", entry.root, "remote", "get-url", "origin"];
+  const remote = await run(remoteArgs);
+  if (remote.exitCode !== 0 || !gitRemoteMatches(remote.stdout, expected.repo)) {
+    return {
+      operation: remoteArgs.join(" "),
+      commandResult: null,
+      identityError:
+        `${entry.sourceId} origin is not ${expected.repo}: ` +
+        `${remote.stdout.trim() || remote.stderr.trim() || "no origin"}`,
+    };
+  }
+  const statusArgs = ["git", "-C", entry.root, "status", "--porcelain"];
+  const status = await run(statusArgs);
+  if (status.exitCode !== 0) {
+    return {
+      operation: statusArgs.join(" "),
+      commandResult: status,
+      identityError: null,
+    };
+  }
+  if (status.stdout.trim()) {
+    // Uncommitted or untracked files. `git pull --ff-only` would often SUCCEED
+    // here and we would then publish unreviewed local edits as "fresh". There
+    // is no snapshot to fall back to, so skip the pull and record honestly:
+    // the working tree is exported, and the receipt says so.
+    return {
+      operation: statusArgs.join(" "),
+      commandResult: {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "checkout has uncommitted or untracked files; skipped pull and " +
+          "exported the working tree as-is",
+      },
+      identityError: null,
+    };
+  }
+  const pullArgs = ["git", "-C", entry.root, "pull", "--ff-only"];
+  const pull = await run(pullArgs);
+  return {
+    operation: pullArgs.join(" "),
+    commandResult: pull,
+    identityError: null,
+  };
+}
+
+function includeInScan(sourceId: string, path: string): boolean {
+  if (isGitBackedSource(sourceId)) {
+    // Markdown only. The export root publishes `.md`, and counting `.git`
+    // internals would inflate source_file_count and peg the freshness
+    // timestamp to the last fetch rather than the newest note.
+    return path.endsWith(".md") && !path.split(sep).includes(".git");
+  }
+  if (sourceId !== "youtube-saved") return true;
+  return (
+    path.endsWith(".md") ||
+    basename(path) === "watch-history-latest.jsonl" ||
+    basename(path) === "watch-later-latest.jsonl"
+  );
+}
 
 export interface SourceExportRoot {
   path: string;
@@ -279,6 +423,17 @@ export async function resolveSourceRegistry(
     join(generated, "chat-exports", "qmd-docs"),
     dependencies.home,
   );
+  const notesRoots = Object.fromEntries(
+    GIT_BACKED_SOURCE_IDS.map((sourceId) => [
+      sourceId,
+      sourceOverride(
+        config,
+        sourceId,
+        join(dependencies.home, "home", "llm-wiki-projects", sourceId),
+        dependencies.home,
+      ),
+    ]),
+  );
   const backup = sourceOverride(
     config,
     "agent-history-central",
@@ -381,6 +536,18 @@ export async function resolveSourceRegistry(
           join(wikiRoot, "sources", "reddit-saved"),
         ],
       },
+      ...GIT_BACKED_SOURCE_IDS.map((sourceId) => ({
+        sourceId,
+        mode: "upstream" as const,
+        root: notesRoots[sourceId]!,
+        required: true,
+        exportRoots: [{
+          path: notesRoots[sourceId]!,
+          collection: "wiki:source" as const,
+          prefix: `${sourceId}/`,
+          kind: "markdown" as const,
+        }],
+      })),
       {
         sourceId: "agent-history-central",
         mode: "upstream",
@@ -427,7 +594,7 @@ export async function runBoundedCommand(
 
 interface ArchivePointer {
   schemaVersion: 1;
-  archiveSchema: 5;
+  archiveSchema: 5 | 6 | 7 | 8;
   catalogSchema: 1;
   database: {
     filename: string;
@@ -480,7 +647,8 @@ function parseArchivePointer(value: unknown): ArchivePointer {
   const catalog = item.catalog;
   if (
     item.schemaVersion !== ARCHIVE_POINTER_SCHEMA ||
-    item.archiveSchema !== ARCHIVE_SCHEMA ||
+    typeof item.archiveSchema !== "number" ||
+    !HISTORY_ARCHIVE_SCHEMAS.has(item.archiveSchema) ||
     item.catalogSchema !== 1 ||
     typeof item.sqliteRuntimeVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/.test(item.sqliteRuntimeVersion) ||
@@ -994,6 +1162,7 @@ export async function makeCurrent(
       const sourceStarted = dependencies.now();
       let operation = `validate ${entry.root}`;
       let commandResult: CommandResult | null = null;
+      let gitIdentityError: string | null = null;
       if (entry.sourceId === "readwise-tweets") {
         const args = [
           "uv",
@@ -1009,6 +1178,11 @@ export async function makeCurrent(
           cwd: registry.wikiCwd,
           timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
         });
+      } else if (isGitBackedSource(entry.sourceId)) {
+        const outcome = await refreshGitBackedSource(entry, dependencies);
+        operation = outcome.operation;
+        commandResult = outcome.commandResult;
+        gitIdentityError = outcome.identityError;
       } else if (entry.sourceId === "github-stars") {
         const args = [
           "uv",
@@ -1025,18 +1199,15 @@ export async function makeCurrent(
       }
       const scanRoots = entry.representedPaths ?? [entry.root];
       const scanned = await dependencies.scan(scanRoots, {
-        include: (path) =>
-          entry.sourceId !== "youtube-saved" ||
-          path.endsWith(".md") ||
-          basename(path) === "watch-history-latest.jsonl" ||
-          basename(path) === "watch-later-latest.jsonl",
+        include: (path) => includeInScan(entry.sourceId, path),
       });
       const commandFailed = commandResult !== null && commandResult.exitCode !== 0;
       const empty = scanned.count === 0;
       const error =
-        empty && entry.required
+        gitIdentityError ??
+        (empty && entry.required
           ? `${entry.sourceId} durable projection is empty`
-          : null;
+          : null);
       const warning = commandFailed
         ? commandError(operation.split(" "), commandResult!)
         : null;

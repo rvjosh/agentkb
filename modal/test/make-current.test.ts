@@ -8,7 +8,9 @@ import { expect, test } from "bun:test";
 import type { AgentKbClient } from "../src/client";
 import { defaultCliDependencies, runMain } from "../src/cli";
 import {
+  GIT_BACKED_SOURCE_IDS,
   assertNoLargeCollapse,
+  gitRemoteMatches,
   makeCurrent,
   resolveSourceRegistry,
   runBoundedCommand,
@@ -122,6 +124,12 @@ function dependencies(options: {
   readwiseExit?: number;
   readwiseCount?: number;
   historySyncExit?: number;
+  notesPullExit?: number;
+  notesCount?: number;
+  notesDirty?: boolean;
+  notesOrigin?: string;
+  notesTopLevel?: string;
+  notesIsRepo?: boolean;
   lock?: boolean;
   archiveLock?: boolean;
   config?: Record<string, unknown>;
@@ -140,6 +148,42 @@ function dependencies(options: {
     readConfig: async () => JSON.stringify(options.config ?? {}),
     runCommand: async (args) => {
       commands.push(args);
+      if (args[0] === "git") {
+        const root = args[2] ?? "";
+        const subcommand = args.slice(3).join(" ");
+        if (subcommand === "rev-parse --show-toplevel") {
+          return options.notesIsRepo === false
+            ? { exitCode: 128, stdout: "", stderr: "not a git repository" }
+            : {
+                exitCode: 0,
+                stdout: `${options.notesTopLevel ?? root}\n`,
+                stderr: "",
+              };
+        }
+        if (subcommand === "remote get-url origin") {
+          const id = GIT_BACKED_SOURCE_IDS.find((name) => root.endsWith(name));
+          return {
+            exitCode: 0,
+            stdout: options.notesOrigin ?? `git@github.com:rvjosh/${id}.git\n`,
+            stderr: "",
+          };
+        }
+        if (subcommand === "status --porcelain") {
+          return {
+            exitCode: 0,
+            stdout: options.notesDirty ? " M instagram/diy/diy-part-1.md\n" : "",
+            stderr: "",
+          };
+        }
+        if (subcommand === "pull --ff-only") {
+          const exitCode = options.notesPullExit ?? 0;
+          return {
+            exitCode,
+            stdout: "",
+            stderr: exitCode ? "network failed" : "",
+          };
+        }
+      }
       const readwise = args.some((arg) => arg.includes("readwise_tweets.py"));
       const historySync =
         args[0] === "agent-history-sync" && args[1] === "run";
@@ -159,6 +203,10 @@ function dependencies(options: {
         ? options.readwiseCount ?? 3
         : roots.some((root) => root.includes("current.json"))
         ? 4
+        : roots.some((root) =>
+            GIT_BACKED_SOURCE_IDS.some((id) => root.endsWith(id)),
+          )
+        ? options.notesCount ?? 7
         : 3,
       newest: "2026-07-26T11:00:00Z",
     }),
@@ -253,7 +301,24 @@ test("history generation validation accepts the production archive schema", asyn
   }
 });
 
-test.each([4, 6])(
+test.each([5, 6, 7, 8])(
+  "history generation validation accepts archive schema %d",
+  async (archiveSchema) => {
+    const fixture = await historyGenerationFixture(archiveSchema);
+    try {
+      expect(await validateHistoryGeneration(fixture.root)).toEqual({
+        databaseSha256: fixture.databaseSha256,
+        catalogSha256: fixture.catalogSha256,
+        databaseFilename: `history-index-${fixture.databaseSha256}.sqlite3.zst`,
+        catalogFilename: `provenance-catalog-${fixture.catalogSha256}.jsonl`,
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([4, 9])(
   "history generation validation rejects archive schema %d",
   async (archiveSchema) => {
     const fixture = await historyGenerationFixture(archiveSchema);
@@ -476,4 +541,162 @@ test("bounded subprocess terminates after its timeout", async () => {
   );
   expect(result.exitCode).toBe(124);
   expect(result.stderr).toContain("timed out");
+});
+
+
+test("registry publishes both notes repos as git-backed external sources", async () => {
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    readConfig: async () => "{}",
+    resolveRoots: async () => ({
+      wikiRoot: "/wiki-projection",
+      chatsReadableRoot: "/unused/readable",
+      externalRoots: {},
+    }),
+  });
+  for (const sourceId of GIT_BACKED_SOURCE_IDS) {
+    const entry = registry.sources.find((s) => s.sourceId === sourceId);
+    expect(entry).toBeDefined();
+    expect(entry!.mode).toBe("upstream");
+    expect(entry!.required).toBe(true);
+    expect(entry!.root).toBe(`/home/tester/home/llm-wiki-projects/${sourceId}`);
+    expect(entry!.exportRoots).toEqual([
+      {
+        path: `/home/tester/home/llm-wiki-projects/${sourceId}`,
+        collection: "wiki:source",
+        prefix: `${sourceId}/`,
+        kind: "markdown",
+      },
+    ]);
+  }
+});
+
+test("notes repo roots honour source_paths overrides", async () => {
+  const registry = await resolveSourceRegistry(undefined, {
+    home: "/home/tester",
+    readConfig: async () =>
+      JSON.stringify({
+        source_paths: { "muse-notes": "~/elsewhere/muse" },
+      }),
+    resolveRoots: async () => ({
+      wikiRoot: "/wiki-projection",
+      chatsReadableRoot: "/unused/readable",
+      externalRoots: {},
+    }),
+  });
+  const muse = registry.sources.find((s) => s.sourceId === "muse-notes");
+  expect(muse!.root).toBe("/home/tester/elsewhere/muse");
+  expect(muse!.exportRoots[0]!.path).toBe("/home/tester/elsewhere/muse");
+});
+
+test("notes repos refresh with git pull --ff-only and publish fresh", async () => {
+  const state = dependencies();
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(0);
+  expect(result.receipt.health).toBe("healthy");
+  for (const sourceId of GIT_BACKED_SOURCE_IDS) {
+    const root = `/home/tester/home/llm-wiki-projects/${sourceId}`;
+    // Identity is proven before the network call, and the pull only runs on a
+    // clean tree.
+    expect(state.commands).toContainEqual(
+      ["git", "-C", root, "rev-parse", "--show-toplevel"],
+    );
+    expect(state.commands).toContainEqual(
+      ["git", "-C", root, "remote", "get-url", "origin"],
+    );
+    expect(state.commands).toContainEqual(
+      ["git", "-C", root, "status", "--porcelain"],
+    );
+    expect(state.commands).toContainEqual(
+      ["git", "-C", root, "pull", "--ff-only"],
+    );
+    const receipt = result.receipt.sources.find((s) => s.source_id === sourceId);
+    expect(receipt!.state).toBe("fresh");
+    expect(receipt!.warning).toBeNull();
+    expect(receipt!.source_file_count).toBe(7);
+  }
+});
+
+test("failed notes git pull degrades to fallback without failing publication", async () => {
+  const state = dependencies({ notesPullExit: 1 });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(0);
+  expect(result.receipt.published).toBe(true);
+  expect(result.receipt.health).toBe("degraded");
+  for (const sourceId of GIT_BACKED_SOURCE_IDS) {
+    const receipt = result.receipt.sources.find((s) => s.source_id === sourceId);
+    expect(receipt!.state).toBe("fallback");
+    expect(receipt!.warning).toContain("network failed");
+    // Still published from the checkout already on disk.
+    expect(receipt!.source_file_count).toBe(7);
+  }
+});
+
+test("empty notes checkout fails the run", async () => {
+  const state = dependencies({ notesCount: 0 });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.published).toBe(false);
+  expect(result.receipt.error).toContain("durable projection is empty");
+});
+
+
+test("dirty notes checkout skips the pull and publishes as fallback", async () => {
+  const state = dependencies({ notesDirty: true });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(0);
+  expect(result.receipt.health).toBe("degraded");
+  const pulls = state.commands.filter(
+    (args) => args[0] === "git" && args[3] === "pull",
+  );
+  expect(pulls).toEqual([]);
+  for (const sourceId of GIT_BACKED_SOURCE_IDS) {
+    const receipt = result.receipt.sources.find((s) => s.source_id === sourceId);
+    expect(receipt!.state).toBe("fallback");
+    expect(receipt!.warning).toContain("uncommitted or untracked files");
+  }
+});
+
+test("notes root that is not a git checkout fails the run", async () => {
+  const state = dependencies({ notesIsRepo: false });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.published).toBe(false);
+  expect(result.receipt.error).toContain("is not a git checkout");
+});
+
+test("notes root pointing at a nested subdirectory fails the run", async () => {
+  const state = dependencies({ notesTopLevel: "/home/tester/somewhere/else" });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.error).toContain("is not the repository root");
+});
+
+test("notes checkout with an unexpected origin fails instead of publishing", async () => {
+  const state = dependencies({
+    notesOrigin: "git@github.com:someone-else/notes.git\n",
+  });
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.published).toBe(false);
+  expect(result.receipt.error).toContain("origin is not rvjosh/muse-notes");
+});
+
+test("git remote matching accepts ssh and https forms of the same repo", () => {
+  for (const url of [
+    "git@github.com:rvjosh/muse-notes.git",
+    "https://github.com/rvjosh/muse-notes.git",
+    "https://github.com/rvjosh/muse-notes",
+    "ssh://git@github.com/rvjosh/muse-notes.git",
+    "  git@github.com:rvjosh/Muse-Notes.git\n",
+  ]) {
+    expect(gitRemoteMatches(url, "rvjosh/muse-notes")).toBe(true);
+  }
+  for (const url of [
+    "git@github.com:someone-else/muse-notes.git",
+    "git@github.com:rvjosh/muse-notes-fork.git",
+    "",
+  ]) {
+    expect(gitRemoteMatches(url, "rvjosh/muse-notes")).toBe(false);
+  }
 });

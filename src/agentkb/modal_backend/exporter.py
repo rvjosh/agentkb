@@ -27,7 +27,11 @@ from agentkb.encoder import DEFAULT_MODEL
 from agentkb.indexing import IndexSpec, list_markdown_files
 from agentkb.modal_backend.generations import validate_generation_id
 from agentkb.utils import chunk_markdown
-from agentkb.wiki.parser import WIKI_SPEC
+from agentkb.wiki.parser import (
+    MIGRATED_REFERENCE_IDS,
+    WIKI_SPEC,
+    make_wiki_spec,
+)
 
 
 SCHEMA = 1
@@ -696,8 +700,20 @@ def export_corpus(
     source_files: dict[str, set[str]] = {
         source_id: set() for source_id in source_receipts
     }
+    # Only skip a `sources/refs/<id>` mirror when THIS plan actually republishes
+    # it from an external source root. A plan without that source must keep
+    # indexing the mirror, or the documents vanish rather than move.
+    externalised_reference_ids = frozenset(
+        prefix
+        for source in validated_plan["sources"]
+        for export_root in source.get("export_roots", [])
+        if (prefix := export_root["prefix"].rstrip("/")) in MIGRATED_REFERENCE_IDS
+    )
     roots_and_specs = (
-        (wiki_root.expanduser().resolve(), WIKI_SPEC),
+        (
+            wiki_root.expanduser().resolve(),
+            make_wiki_spec(externalised_reference_ids),
+        ),
         (readable_root, CHAT_SPEC),
     )
     with corpus_path.open("wb") as corpus:

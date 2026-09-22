@@ -618,3 +618,106 @@ def test_schema7_exports_archive_visible_events_for_new_sources(tmp_path, source
     blob.write_bytes(b'corrupt')
     with pytest.raises((RuntimeError,ValueError)):
         list(exporter._history_records(backup))
+
+
+def _notes_plan(checkout: Path, *, externalise: bool) -> dict:
+    """A minimal source plan, optionally publishing muse-notes externally."""
+    return {
+        "schema": 1,
+        "include_local_chats": False,
+        "sources": [
+            {
+                "source_id": "muse-notes",
+                "mode": "upstream",
+                "state": "fresh",
+                "operation": "git pull --ff-only",
+                "started_at": "2026-07-25T11:59:00Z",
+                "finished_at": "2026-07-25T12:00:00Z",
+                "duration_ms": 60000,
+                "root": str(checkout),
+                "source_file_count": 1,
+                "exported_document_count": 0,
+                "newest_source_timestamp": "2026-07-25T11:00:00Z",
+                "freshness_threshold_minutes": None,
+                "age_minutes": 60,
+                "warning": None,
+                "error": None,
+                "export_roots": (
+                    [
+                        {
+                            "path": str(checkout),
+                            "collection": "wiki:source",
+                            "prefix": "muse-notes/",
+                            "kind": "markdown",
+                        }
+                    ]
+                    if externalise
+                    else []
+                ),
+            }
+        ],
+    }
+
+
+def _export_with_mirror(tmp_path: Path, monkeypatch, *, externalise: bool) -> list[dict]:
+    wiki_root = tmp_path / "wiki-root"
+    chats_root = tmp_path / "chats-root"
+    output = tmp_path / "agentkb-modal-refresh-output"
+    output.mkdir()
+    _write_corpus(wiki_root, chats_root)
+
+    # The stale wiki-side mirror that the migration replaces.
+    mirror = wiki_root / "sources" / "refs" / "muse-notes"
+    mirror.mkdir(parents=True)
+    (mirror / "note.md").write_text("---\ntitle: Note\n---\n# Note\nShared body.\n")
+    # A ref that was NOT migrated must keep being indexed either way.
+    other = wiki_root / "sources" / "refs" / "some-other-ref"
+    other.mkdir(parents=True)
+    (other / "keep.md").write_text("---\ntitle: Keep\n---\n# Keep\nKeep body.\n")
+
+    checkout = tmp_path / "muse-notes"
+    checkout.mkdir()
+    (checkout / "note.md").write_text("---\ntitle: Note\n---\n# Note\nShared body.\n")
+
+    monkeypatch.setattr(exporter, "prepare_chats", lambda root: root / "readable")
+    exporter.export_corpus(
+        generation_id=GENERATION_ID,
+        wiki_root=wiki_root,
+        chats_root=chats_root,
+        output_dir=output,
+        exported_at=datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc),
+        source_plan=_notes_plan(checkout, externalise=externalise),
+    )
+    return [
+        json.loads(line)
+        for line in (output / "corpus.jsonl").read_bytes().splitlines()
+    ]
+
+
+def test_externalised_ref_replaces_its_wiki_mirror_without_duplicating(
+    tmp_path, monkeypatch
+):
+    records = _export_with_mirror(tmp_path, monkeypatch, externalise=True)
+    files = [record["file"] for record in records]
+
+    # Published once, from the external checkout only.
+    assert "muse-notes/note.md" in files
+    assert "sources/refs/muse-notes/note.md" not in files
+    assert sum("note.md" in name for name in files) == 1
+    # A non-migrated ref is untouched.
+    assert "sources/refs/some-other-ref/keep.md" in files
+    # canonical_id hashes the stored path, so identical bytes at two paths would
+    # NOT trip the duplicate guard — the skip is what prevents the double entry.
+    assert len({record["canonical_id"] for record in records}) == len(records)
+
+
+def test_ref_mirror_still_indexed_when_the_plan_has_no_external_source(
+    tmp_path, monkeypatch
+):
+    records = _export_with_mirror(tmp_path, monkeypatch, externalise=False)
+    files = [record["file"] for record in records]
+
+    # Nothing republishes it, so dropping the mirror would lose the document.
+    assert "sources/refs/muse-notes/note.md" in files
+    assert "muse-notes/note.md" not in files
+    assert "sources/refs/some-other-ref/keep.md" in files

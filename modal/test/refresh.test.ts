@@ -270,6 +270,8 @@ test("path roots use override, config, and portable fallbacks", async () => {
         "/home/tester/home/llm-wiki-generated/readwise-tweets/qmd-docs",
       "youtube-saved/":
         "/home/tester/home/llm-wiki-generated/youtube-playlists",
+      "muse-notes/": "/home/tester/home/llm-wiki-projects/muse-notes",
+      "grok-bot-notes/": "/home/tester/home/llm-wiki-projects/grok-bot-notes",
     },
   });
   const fallback = await resolvePathRoots(
@@ -291,6 +293,8 @@ test("path roots use override, config, and portable fallbacks", async () => {
         "/home/tester/home/llm-wiki-generated/readwise-tweets/qmd-docs",
       "youtube-saved/":
         "/home/tester/home/llm-wiki-generated/youtube-playlists",
+      "muse-notes/": "/home/tester/home/llm-wiki-projects/muse-notes",
+      "grok-bot-notes/": "/home/tester/home/llm-wiki-projects/grok-bot-notes",
     },
   });
 });
@@ -347,4 +351,23 @@ test("production corpus validation has no whole-file read boundary", async () =>
   );
   expect(source).not.toContain("readBytes(corpusPath)");
   expect(source).not.toContain("readFile(corpusPath");
+});
+
+
+test("notes source_paths overrides localize search hits to the real checkout", async () => {
+  const roots = await resolvePathRoots(
+    undefined,
+    "/home/tester",
+    async () =>
+      JSON.stringify({
+        source_paths: { "grok-bot-notes": "~/work/grok-bot-notes" },
+      }),
+  );
+  expect(roots.externalRoots["grok-bot-notes/"]).toBe(
+    "/home/tester/work/grok-bot-notes",
+  );
+  // Unconfigured sibling still falls back to the default checkout location.
+  expect(roots.externalRoots["muse-notes/"]).toBe(
+    "/home/tester/home/llm-wiki-projects/muse-notes",
+  );
 });
