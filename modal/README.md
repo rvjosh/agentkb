@@ -36,12 +36,15 @@ make-current runs therefore depends on which host it runs on:
 
 | Host | `history_sync_route` | Notes |
 | --- | --- | --- |
-| Air | `mini-admin-to-air-backup` (default) | Also feeds Air's independent Dropbox/restic off-site lane |
+| Air | `mini-admin-to-air-backup` (code default) | Also feeds Air's independent Dropbox/restic off-site lane |
 | Mini-agent | `mini-admin-to-mini-agent-backup` | Set explicitly in `~/.agentkb/config.json` |
 
-Air's behaviour is the default and is unchanged: omit the key and make-current
-runs `mini-admin-to-air-backup` for both its `run` and its `status` check. On
-Mini-agent, set the route explicitly:
+`mini-admin-to-air-backup` is only the *code* default: omit the key and
+make-current runs it for both its `run` and its `status` check. The live
+`agentkb-refresh` loop is owned by **Mini-agent**, not Air, so the production
+path is the explicit route below. (Ownership of record: `.loops/registry.json`
+and `note-automation-ownership-matrix.md` in the wiki.) On Mini-agent, set the
+route explicitly:
 
 ```json
 {
@@ -57,8 +60,8 @@ layout. Do not schedule the two routes to overlap: they share one Mini-admin-sid
 staging directory and there is no Mini-admin-side lock serialising them.
 
 Source modes are `upstream`, `projection`, `human-dependent`, and
-`disabled-costly`. Readwise Tweets and GitHub Stars are the only wiki upstream
-refreshes in the daily path. YouTube, historical chat exports, and Reddit are
+`disabled-costly`. Readwise Tweets, GitHub Stars, and the two git-backed notes
+repos are the wiki upstream refreshes in the daily path. YouTube, historical chat exports, and Reddit are
 validated as durable projections; the job never runs browser-cookie, OAuth,
 X, or Gemini work. A failed safe upstream may publish only when its existing
 projection remains valid and nonempty; the source is marked `fallback` and the
@@ -70,6 +73,44 @@ run and `last-success.json` supplies the prior counts used by the conservative
 50% collapse guard (configurable with
 `make_current.collapse_ratio` in `~/.agentkb/config.json`). The PID-aware lock
 covers the complete run; live overlap exits 75 without source work.
+
+### Git-backed notes sources
+
+`muse-notes` and `grok-bot-notes` publish straight from their own local git
+checkouts (default `~/home/llm-wiki-projects/<id>`, overridable with
+`source_paths.<id>`). Their documents are stored under the `<id>/` prefix in
+`wiki:source`, and search results localize back to the checkout so an agent can
+open and edit the real file.
+
+They replace the stale mirrors that used to be copied into the wiki under
+`sources/refs/<id>/`. While both copies still exist on disk, the exporter skips
+a mirror **only** when the same run republishes that id from an external source
+root — see `make_wiki_spec` in `src/agentkb/wiki/parser.py`. An unconditional
+skip would delete documents from any run without that source, such as a local
+`agentkb index`. `canonical_id` hashes the stored path, so the duplicate-id
+guard cannot catch a mirror/source overlap; this skip is the only thing
+preventing every migrated document from appearing twice.
+
+Refresh is deliberately conservative, in this order:
+
+1. `git rev-parse --show-toplevel` must resolve to the configured root, and
+   `git remote get-url origin` must match the expected `owner/repo`. Either
+   check failing is a hard **error**, not a fallback: it means `source_paths`
+   points somewhere unexpected, and publishing whatever markdown is there under
+   a trusted source id would be silent corruption.
+2. `git status --porcelain` must be clean. If it is not, the pull is **skipped**
+   and the source degrades to `fallback` with a warning. `git pull --ff-only`
+   frequently succeeds on a dirty tree, which would publish unreviewed local
+   edits as `fresh`; there is no snapshot to publish instead, so the working
+   tree is exported and the receipt says exactly that.
+3. `git pull --ff-only`, so a diverged checkout is never rewritten. A failed
+   pull is a `fallback` with the git error as the receipt warning.
+
+An empty checkout still fails the run, as for any required source.
+
+**Host requirement:** the machine running `make-current` needs both checkouts
+present and a credential that can reach `github.com:rvjosh/*`. Without network
+the run still publishes, degraded, from the local checkouts.
 
 `~/.agentkb/config.json` keys read by make-current: `wiki_cwd`,
 `source_paths.<source-id>`, `make_current.collapse_ratio`,

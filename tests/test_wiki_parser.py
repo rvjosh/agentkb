@@ -149,3 +149,40 @@ def test_build_wiki_index_namespaces_state_keys_by_subdir(monkeypatch, tmp_path)
     # Document file paths are also namespaced so delete_documents_by_file is correct.
     doc_files = {d["file"] for d in fake.saved_docs}
     assert doc_files == {"wiki/foo.md", "sources/foo.md"}
+
+
+def _mirror_tree(root):
+    """A wiki projection holding two sources/refs mirrors and a normal page."""
+    (root / "wiki").mkdir(parents=True)
+    (root / "wiki" / "page.md").write_text("# Page\nBody.\n")
+    for ref_id in ("muse-notes", "some-other-ref"):
+        mirror = root / "sources" / "refs" / ref_id
+        mirror.mkdir(parents=True)
+        (mirror / "note.md").write_text(f"# {ref_id}\nBody.\n")
+
+
+def test_default_wiki_spec_indexes_every_ref_mirror(tmp_path):
+    # Local `agentkb index` has no external source plan, so nothing may be
+    # skipped — a skip there deletes documents instead of relocating them.
+    _mirror_tree(tmp_path)
+    files = wiki_parser.WIKI_SPEC.list_files(tmp_path)
+    assert "sources/refs/muse-notes/note.md" in files
+    assert "sources/refs/some-other-ref/note.md" in files
+    assert "wiki/page.md" in files
+
+
+def test_wiki_spec_skips_only_the_named_externalised_refs(tmp_path):
+    _mirror_tree(tmp_path)
+    files = wiki_parser.make_wiki_spec(frozenset({"muse-notes"})).list_files(tmp_path)
+    assert "sources/refs/muse-notes/note.md" not in files
+    assert "sources/refs/some-other-ref/note.md" in files
+    assert "wiki/page.md" in files
+
+
+def test_reference_mirror_id_only_matches_the_refs_subtree():
+    assert wiki_parser.reference_mirror_id("sources/refs/muse-notes/a.md") == "muse-notes"
+    assert wiki_parser.reference_mirror_id("sources/refs/muse-notes") == "muse-notes"
+    # Not a mirror path: must never be skipped.
+    assert wiki_parser.reference_mirror_id("wiki/muse-notes/a.md") is None
+    assert wiki_parser.reference_mirror_id("sources/muse-notes/a.md") is None
+    assert wiki_parser.reference_mirror_id("sources/refs") is None
