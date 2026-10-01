@@ -125,8 +125,8 @@ export interface SearchRequest {
 
 export interface SearchHit {
   collection: string;
-  file: string;
-  path: string;
+  file: string | null;
+  path: string | null;
   filename: string;
   line: number;
   score: number;
@@ -137,6 +137,8 @@ export interface SearchHit {
   section?: string;
   tags?: string[];
   content?: string;
+  session_ref?: string;
+  read_with?: string | null;
 }
 
 export interface SearchResult {

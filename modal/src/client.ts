@@ -181,6 +181,9 @@ export function createModalAgentKbClient(roots?: PathRoots): AgentKbClient {
   return new ModalAgentKbClient(new ModalClient(), roots);
 }
 
+const CENTRAL_CHAT_PATH = /^agent-history-central\/([a-z-]+)\/([^/]+)\.md$/;
+const CENTRAL_LIBRARY_PREFIX: Record<string, string> = { claude: "c", codex: "x" };
+
 export function localizeSearchResult(
   result: SearchResult,
   roots: PathRoots,
@@ -188,6 +191,24 @@ export function localizeSearchResult(
   return {
     ...result,
     results: result.results.map((hit) => {
+      const central = CENTRAL_CHAT_PATH.exec(hit.relative_path);
+      if (hit.collection === "chats" && central) {
+        // Central transcripts are exported on the build host and never exist
+        // under the local readable root, so name the exact reader instead.
+        const [, source = "", sessionId = ""] = central;
+        const prefix = CENTRAL_LIBRARY_PREFIX[source];
+        const sessionRef = `${prefix ?? source}:${sessionId}`;
+        return {
+          ...hit,
+          file: null,
+          path: null,
+          filename: basename(hit.relative_path),
+          session_ref: sessionRef,
+          read_with: prefix
+            ? `agent-history-central library-session ${sessionRef} --json`
+            : null,
+        };
+      }
       const external = Object.entries(roots.externalRoots)
         .sort(([left], [right]) => right.length - left.length)
         .find(([prefix]) => hit.relative_path.startsWith(prefix));
