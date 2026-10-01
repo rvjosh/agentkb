@@ -112,39 +112,51 @@ def test_inventory_rejects_duplicate_and_unbounded_state(tmp_path):
         generations.inventory_generations(tmp_path, max_entries=3)
 
 
-def test_find_session_uses_exact_file_identity_across_all_corpora(tmp_path):
+def test_find_session_scans_only_the_current_generation(tmp_path):
     _volume(tmp_path)
-    result = generations.find_session_presence(tmp_path, "codex", "target-session")
-    assert result["verified"] is True
-    assert result["canonical_file"] == TARGET
-    assert result["total_exact_match_count"] == 4
-    assert {
-        item["generation_id"]: item["exact_match_count"] for item in result["results"]
-    } == {
-        CURRENT: 0,
-        PREVIOUS: 1,
-        ORPHAN: 2,
-        STAGED: 1,
-    }
-    assert TARGET not in json.dumps(result).replace(result["canonical_file"], "")
+    absent = generations.find_session_presence(tmp_path, "codex", "target-session")
+    assert absent["verified"] is True
+    assert absent["canonical_file"] == TARGET
+    assert absent["total_exact_match_count"] == 0
+    assert [
+        (item["generation_id"], item["exact_match_count"]) for item in absent["results"]
+    ] == [(CURRENT, 0)]
+
+    generations.staged_paths(tmp_path, STAGED)[0].write_text("{bad json}\n")
+    present = generations.find_session_presence(tmp_path, "codex", "unrelated")
+    assert present["verified"] is True
+    assert [
+        (item["generation_id"], item["exact_match_count"]) for item in present["results"]
+    ] == [(CURRENT, 1)]
 
 
-def test_find_session_fails_closed_for_malformed_and_oversized_staging(
+def test_exact_session_key_fails_closed_for_malformed_and_oversized_staging(
     tmp_path, monkeypatch
 ):
     _volume(tmp_path)
     corpus, _ = generations.staged_paths(tmp_path, STAGED)
+
+    def dry_run():
+        return generations.delete_generation(
+            tmp_path,
+            STAGED,
+            target_type="staged",
+            expected_current_generation_id=CURRENT,
+            force=False,
+            actor="test",
+            reason="verify",
+            exact_session_key="codex/target-session",
+            commit=lambda: pytest.fail("dry run committed"),
+        )
+
     corpus.write_text("{bad json}\n")
-    malformed = generations.find_session_presence(tmp_path, "codex", "target-session")
-    assert malformed["verified"] is False
-    assert malformed["verification_failures"][0]["generation_id"] == STAGED
-    assert malformed["total_exact_match_count"] == 3
+    with pytest.raises(ValueError, match="failed closed"):
+        dry_run()
 
     corpus.write_text(json.dumps({"file": TARGET}) + "\n")
     monkeypatch.setattr(generations, "MAX_STAGED_CORPUS_BYTES", 1)
-    oversized = generations.find_session_presence(tmp_path, "codex", "target-session")
-    assert oversized["verified"] is False
-    assert "bounded scan size" in oversized["verification_failures"][0]["error"]
+    with pytest.raises(ValueError, match="failed closed"):
+        dry_run()
 
 
 def test_exact_session_key_refuses_a_target_without_an_exact_match(tmp_path):

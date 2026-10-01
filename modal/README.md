@@ -266,7 +266,7 @@ rejects malformed IDs, symlinks, escaping paths, duplicate built/staged IDs,
 ambiguous pointers, invalid manifests/artifacts, and more than 1,000 combined
 entries. Results contain IDs, classifications, and counts only.
 
-Verify one exact central-history identity across every inventoried corpus:
+Check whether one exact central-history identity is in the current generation:
 
 ```bash
 agentkb-modal find-session \
@@ -275,12 +275,14 @@ agentkb-modal find-session \
   --json
 ```
 
-Built generations query immutable `metadata.db` with
-`documents.file = agent-history-central/<source>/<session-id>.md`. Staged
-generations stream `corpus.jsonl` and compare that exact `file` field. The scan
-does not use semantic search or return record content. SQLite and staged bytes,
-lines, and record counts are bounded; malformed or oversized staging is
-reported as a verification failure and fails closed.
+The query is `documents.file = agent-history-central/<source>/<session-id>.md`
+against the current generation's immutable `metadata.db`. It does not use
+semantic search or return record content. `documents.file` has no index, so
+each scan reads the whole table; find-session therefore never scans previous,
+orphan, or staged corpora. To check one of those before erasing it, pass
+`--exact-session-key <source>/<session-id>` to a `delete-generation` or
+`delete-staged` dry run, which scans only that target and fails closed on
+malformed or oversized staging.
 
 Deletion is dry-run by default:
 

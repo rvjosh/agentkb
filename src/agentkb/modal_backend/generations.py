@@ -250,13 +250,31 @@ def _scan_staged_corpus(corpus: Path, stored_file: str) -> tuple[int, int]:
 def find_session_presence(
     volume_root: Path, source: object, session_id: object
 ) -> dict[str, Any]:
-    """Verify exact stored-file presence without returning transcript content."""
-    source, session_id, stored_file = validate_session_key(source, session_id)
+    """Verify exact stored-file presence in the current generation only.
+
+    Each metadata.db scan reads the whole unindexed documents table, so scanning
+    every orphan cannot finish inside the function timeout. Per-generation
+    erasure checks go through delete_generation's exact_session_key dry run.
+    """
+    validate_session_key(source, session_id)
     inventory = inventory_generations(volume_root)
+    current = [item for item in inventory["items"] if item["classification"] == "current"]
+    if not current:
+        raise ValueError("no current generation is published")
+    return _session_presence(volume_root, source, session_id, current)
+
+
+def _session_presence(
+    volume_root: Path,
+    source: object,
+    session_id: object,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source, session_id, stored_file = validate_session_key(source, session_id)
     results: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
     total_matches = 0
-    for item in inventory["items"]:
+    for item in items:
         generation_id = item["generation_id"]
         try:
             if item["type"] == "generation":
@@ -787,8 +805,8 @@ def delete_generation(
             raise ValueError("target classification conflicts with deletion intent")
         exact_match_count = incomplete[0][0]["counts"]["exact_match_count"]
     elif session_key_parts is not None:
-        presence = find_session_presence(
-            volume_root, session_key_parts[0], session_key_parts[1]
+        presence = _session_presence(
+            volume_root, session_key_parts[0], session_key_parts[1], matching[:1]
         )
         target_presence = next(
             (
