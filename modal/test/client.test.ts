@@ -60,6 +60,24 @@ test("search reconstructs local paths solely from relative_path", async () => {
               line: 2,
               score: 0.5,
             },
+            {
+              collection: "chats",
+              file: "/container/cwd/central.md",
+              path: "/container/cwd/central.md",
+              filename: "central.md",
+              relative_path: "agent-history-central/codex/session-1.md",
+              line: 3,
+              score: 0.4,
+            },
+            {
+              collection: "chats",
+              file: "/container/cwd/pi.md",
+              path: "/container/cwd/pi.md",
+              filename: "pi.md",
+              relative_path: "agent-history-central/pi/session-2.md",
+              line: 4,
+              score: 0.3,
+            },
           ],
         }),
       }),
@@ -75,10 +93,23 @@ test("search reconstructs local paths solely from relative_path", async () => {
   expect(result.results.map((hit) => hit.path)).toEqual([
     "/Users/local/wiki/wiki/local.md",
     "/Users/local/chats/readable/2026-07/chat.md",
+    null,
+    null,
   ]);
   expect(result.results.map((hit) => hit.relative_path)).toEqual([
     "wiki/local.md",
     "2026-07/chat.md",
+    "agent-history-central/codex/session-1.md",
+    "agent-history-central/pi/session-2.md",
+  ]);
+  expect(
+    result.results.slice(2).map(({ session_ref, read_with }) => ({ session_ref, read_with })),
+  ).toEqual([
+    {
+      session_ref: "x:session-1",
+      read_with: "agent-history-central library-session x:session-1 --json",
+    },
+    { session_ref: "pi:session-2", read_with: null },
   ]);
   expect(JSON.stringify(result)).not.toContain("/root/");
   expect(JSON.stringify(result)).not.toContain("/container/cwd");

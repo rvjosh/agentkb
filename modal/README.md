@@ -401,7 +401,12 @@ cleaned-up disposable FastPLAID workspace.
 Remote search responses carry the stored relative path as authority. The
 control plane keeps `relative_path` and reconstructs `file` and `path` against
 the configured wiki or chats-readable root, so Modal container paths cannot
-leak into hook-facing output.
+leak into hook-facing output. Chat hits under `agent-history-central/` are the
+exception: those transcripts are exported on the build host and never exist
+locally, so `file` and `path` are `null`, `session_ref` carries the exact
+session identity (`c:`/`x:` for Claude/Codex), and `read_with` gives the
+command that reads it (`agent-history-central library-session <ref> --json`),
+or `null` for sources that command cannot read yet.
 
 ## Local verification
 
