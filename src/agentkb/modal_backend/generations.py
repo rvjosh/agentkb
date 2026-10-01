@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -202,7 +203,9 @@ def _scan_built_generation(database: Path, stored_file: str) -> int:
         raise ValueError("metadata.db exceeds the bounded scan size")
     uri = f"{database.resolve().as_uri()}?mode=ro&immutable=1"
     try:
-        with sqlite3.connect(uri, uri=True) as connection:
+        # sqlite3's own context manager does not close; a handle left open in a
+        # warm container makes the next volume.reload() fail with open files.
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
             relation = connection.execute(
                 """
                 SELECT 1 FROM sqlite_master
