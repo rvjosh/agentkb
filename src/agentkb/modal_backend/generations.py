@@ -24,7 +24,7 @@ MAX_STAGED_CORPUS_BYTES = 512 * 1024 * 1024
 MAX_STAGED_RECORDS = 1_000_000
 MAX_STAGED_LINE_BYTES = 4 * 1024 * 1024
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
-SOURCES = {"claude", "codex", "cursor", "pi", "opencode", "openclaw"}
+SOURCES = {"claude", "codex", "cursor", "pi", "opencode", "openclaw", "heyclicky", "grok-bot"}
 
 
 def validate_generation_id(value: object) -> str:
@@ -191,7 +191,7 @@ def inventory_generations(
 
 def validate_session_key(source: object, session_id: object) -> tuple[str, str, str]:
     if source not in SOURCES:
-        raise ValueError("source must be claude, codex, cursor, pi, or opencode")
+        raise ValueError("source must be claude, codex, cursor, pi, opencode, openclaw, heyclicky, or grok-bot")
     if not isinstance(session_id, str) or not SESSION_ID_RE.fullmatch(session_id):
         raise ValueError("session_id must be a safe canonical identifier")
     stored_file = f"agent-history-central/{source}/{session_id}.md"
