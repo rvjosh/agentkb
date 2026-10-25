@@ -620,6 +620,52 @@ def test_schema7_exports_archive_visible_events_for_new_sources(tmp_path, source
         list(exporter._history_records(backup))
 
 
+
+def test_grok_message_kept_in_both_copies_is_exported_once_from_the_live_copy(tmp_path):
+    bot='e3c4b8ad-fbe6-4be5-9cf5-fb06c74a0d4a'
+    live='05a91587-d105-855d-8039-488dc48ca7e0'
+    assert exporter._grok_live_session_id(bot)==live
+    backup=tmp_path/'backup';database=tmp_path/'index.sqlite3'
+    sessions={bot:[('user','[t0u]\nfind a walnut desk'),('assistant','still searching')],
+              live:[('user','find a walnut desk')],
+              'sand-subagent-desk':[('user','find a walnut desk')]}
+    with sqlite3.connect(database) as connection:
+        connection.executescript('''
+          CREATE TABLE schema_meta(key TEXT PRIMARY KEY,value TEXT);
+          INSERT INTO schema_meta VALUES ('schema_version','9');
+          CREATE TABLE transcripts(id INTEGER PRIMARY KEY,source TEXT,native_session_id TEXT,created_at TEXT);
+          CREATE TABLE versions(sha256 TEXT,transcript_id INTEGER,blob_path TEXT,parser_status TEXT,title TEXT,cwd TEXT,start_time TEXT,end_time TEXT,created_at TEXT);
+          CREATE TABLE observations(version_sha256 TEXT,present_at_last_scan INTEGER);
+          CREATE TABLE events(version_sha256 TEXT,ordinal INTEGER,role TEXT,text TEXT,timestamp TEXT);
+          CREATE TABLE lifecycle_exclusions(source TEXT,native_session_id TEXT);
+          CREATE VIEW publication_eligible_sessions AS SELECT * FROM transcripts t WHERE NOT EXISTS (
+            SELECT 1 FROM lifecycle_exclusions x WHERE x.source=t.source AND x.native_session_id=t.native_session_id);
+        ''')
+        for index,(session,events) in enumerate(sessions.items(),start=1):
+            raw=json.dumps({'session':session}).encode()+b'\n'
+            digest=hashlib.sha256(raw).hexdigest()
+            relative=f'raw/grok-bot/{digest[:2]}/{digest}.jsonl'
+            native=tmp_path/f'{index}.jsonl';native.write_bytes(raw)
+            blob=backup/(relative+'.zst');blob.parent.mkdir(parents=True,exist_ok=True)
+            subprocess.run(['zstd','-q','-o',str(blob),str(native)],check=True)
+            connection.execute('INSERT INTO transcripts VALUES (?,\'grok-bot\',?,\'2026-09-12\')',(index,session))
+            connection.execute('INSERT INTO versions VALUES (?,?,?,\'ok\',NULL,NULL,NULL,NULL,\'2026-09-12\')',(digest,index,relative))
+            connection.execute('INSERT INTO observations VALUES (?,1)',(digest,))
+            for ordinal,(role,text) in enumerate(events):
+                connection.execute('INSERT INTO events VALUES (?,?,?,?,NULL)',(digest,ordinal,role,text))
+
+    def exported():
+        publish_history_generation(backup,database,archive_schema=9)
+        return sorted((key,record['raw_content']) for key,record in exporter._history_records(backup))
+
+    assert exported()==sorted([(f'grok-bot/{bot}','still searching'),(f'grok-bot/{live}','find a walnut desk'),
+                               ('grok-bot/sand-subagent-desk','find a walnut desk')])
+    with sqlite3.connect(database) as connection:
+        connection.execute('INSERT INTO lifecycle_exclusions VALUES (\'grok-bot\',?)',(live,))
+    assert exported()==sorted([(f'grok-bot/{bot}','[t0u]\nfind a walnut desk'),(f'grok-bot/{bot}','still searching'),
+                               ('grok-bot/sand-subagent-desk','find a walnut desk')])
+
+
 def _notes_plan(checkout: Path, *, externalise: bool) -> dict:
     """A minimal source plan, optionally publishing muse-notes externally."""
     return {

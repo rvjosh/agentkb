@@ -476,6 +476,28 @@ def _decompress_history_index(backup_root: Path) -> Path:
         raise
 
 
+# Copy of agent-history's agent_history/grok_overlap.py rule, which owns it: a
+# message in a Grok Bot's retired native transcript is not exported again when
+# the same bot's live copy (session id derived from the bot id) holds the same
+# role and text. Compared on letters and digits only, after a [t12u] turn tag.
+_GROK_TURN_TAG = re.compile(r"^\s*\[t\d+[a-z]*\]\s*")
+_GROK_NOT_LETTER_OR_DIGIT = re.compile(r"[\W_]+")
+
+
+def _grok_live_session_id(bot_id: str) -> str:
+    digest = bytearray(
+        hashlib.sha256(f"grok-bot-live-search-index\0{bot_id.lower()}".encode()).digest()[:16]
+    )
+    digest[6] = (digest[6] & 0x0F) | 0x80
+    digest[8] = (digest[8] & 0x3F) | 0x80
+    h = digest.hex()
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
+
+
+def _grok_match_key(text: str) -> str:
+    return _GROK_NOT_LETTER_OR_DIGIT.sub("", _GROK_TURN_TAG.sub("", text, count=1).casefold())
+
+
 def _history_records(
     backup_root: Path,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -547,6 +569,11 @@ def _history_records(
             ORDER BY source, native_session_id
             """
         ).fetchall()
+        grok_versions = {
+            str(row["native_session_id"]): row["sha256"]
+            for row in rows
+            if row["source"] == "grok-bot"
+        }
         for row in rows:
             source = str(row["source"])
             session_id = str(row["native_session_id"])
@@ -563,10 +590,19 @@ def _history_records(
                 # Still verify the referenced immutable raw bytes before export.
                 for _ in _iter_history_messages(source, blob, str(row["sha256"])):
                     pass
+                live_keys: set[tuple[str, str]] = set()
+                live_sha = grok_versions.get(_grok_live_session_id(session_id)) if source == "grok-bot" else None
+                if live_sha is not None:
+                    live_keys = {
+                        (str(event["role"]), _grok_match_key(str(event["text"])))
+                        for event in connection.execute(
+                            "SELECT role,text FROM events WHERE version_sha256=?", (live_sha,))
+                    }
                 messages = ((str(event["role"]), str(event["text"]), str(event["timestamp"] or ""))
                     for event in connection.execute(
                         "SELECT role,text,timestamp FROM events WHERE version_sha256=? ORDER BY ordinal",
-                        (row["sha256"],)))
+                        (row["sha256"],))
+                    if (str(event["role"]), _grok_match_key(str(event["text"])) or None) not in live_keys)
             else:
                 messages = _iter_history_messages(source, blob, str(row["sha256"]))
             for ordinal, (role, text, timestamp) in enumerate(messages, start=1):
