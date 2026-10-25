@@ -72,6 +72,7 @@ const HISTORY_ARCHIVE_SCHEMAS: ReadonlySet<number> = new Set([5, 6, 7, 8]);
 export const GIT_BACKED_SOURCES: readonly { sourceId: string; repo: string }[] = [
   { sourceId: "muse-notes", repo: "rvjosh/muse-notes" },
   { sourceId: "grok-bot-notes", repo: "rvjosh/grok-bot-notes" },
+  { sourceId: "dot-notes", repo: "rvjosh/dot-notes" },
 ];
 
 export const GIT_BACKED_SOURCE_IDS: readonly string[] = GIT_BACKED_SOURCES.map(

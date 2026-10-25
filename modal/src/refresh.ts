@@ -126,6 +126,7 @@ export async function resolvePathRoots(
     // file, not a read-only mirror.
     "muse-notes/": join(home, "home", "llm-wiki-projects", "muse-notes"),
     "grok-bot-notes/": join(home, "home", "llm-wiki-projects", "grok-bot-notes"),
+    "dot-notes/": join(home, "home", "llm-wiki-projects", "dot-notes"),
   };
   const externalRoots = Object.fromEntries(
     Object.entries(externalDefaults).map(([prefix, fallback]) => {
