@@ -331,7 +331,7 @@ test.each([5, 6, 7, 8])(
   },
 );
 
-test.each([4, 9])(
+test.each([4, 10])(
   "history generation validation rejects archive schema %d",
   async (archiveSchema) => {
     const fixture = await historyGenerationFixture(archiveSchema);

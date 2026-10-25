@@ -59,7 +59,7 @@ const ARCHIVE_POINTER_SCHEMA = 1;
 // whole run before the exporter is ever reached. The number describes the
 // archive's interior, which only the exporter reads; everything validated below
 // is pointer shape plus hash/size/permission integrity, which is schema-independent.
-const HISTORY_ARCHIVE_SCHEMAS: ReadonlySet<number> = new Set([5, 6, 7, 8]);
+const HISTORY_ARCHIVE_SCHEMAS: ReadonlySet<number> = new Set([5, 6, 7, 8, 9]);
 
 // Sources published straight from a local git checkout of an external notes
 // repo, replacing the stale wiki-side mirrors under `sources/refs/<id>/` (the
@@ -614,7 +614,7 @@ export async function runBoundedCommand(
 
 interface ArchivePointer {
   schemaVersion: 1;
-  archiveSchema: 5 | 6 | 7 | 8;
+  archiveSchema: 5 | 6 | 7 | 8 | 9;
   catalogSchema: 1;
   database: {
     filename: string;
