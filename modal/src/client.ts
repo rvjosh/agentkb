@@ -182,7 +182,17 @@ export function createModalAgentKbClient(roots?: PathRoots): AgentKbClient {
 }
 
 const CENTRAL_CHAT_PATH = /^agent-history-central\/([a-z-]+)\/([^/]+)\.md$/;
-const CENTRAL_LIBRARY_PREFIX: Record<string, string> = { claude: "c", codex: "x" };
+// agent-history's library-session prefixes; every central source has one.
+const CENTRAL_LIBRARY_PREFIX: Record<string, string> = {
+  claude: "c",
+  codex: "x",
+  cursor: "u",
+  pi: "p",
+  opencode: "o",
+  openclaw: "w",
+  heyclicky: "h",
+  "grok-bot": "g",
+};
 
 export function localizeSearchResult(
   result: SearchResult,

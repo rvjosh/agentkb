@@ -109,7 +109,10 @@ test("search reconstructs local paths solely from relative_path", async () => {
       session_ref: "x:session-1",
       read_with: "agent-history-central library-session x:session-1 --json",
     },
-    { session_ref: "pi:session-2", read_with: null },
+    {
+      session_ref: "p:session-2",
+      read_with: "agent-history-central library-session p:session-2 --json",
+    },
   ]);
   expect(JSON.stringify(result)).not.toContain("/root/");
   expect(JSON.stringify(result)).not.toContain("/container/cwd");
