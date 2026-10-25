@@ -26,7 +26,7 @@ WIKI_ROOTS: list[tuple[str, str]] = [
 # git checkouts (see the source registry in ``modal/src/make-current.ts``).
 # Membership here only marks a mirror as *migratable*; nothing is skipped unless
 # a caller names the id explicitly. See ``make_wiki_spec``.
-MIGRATED_REFERENCE_IDS: frozenset[str] = frozenset({"muse-notes", "grok-bot-notes", "dot-notes"})
+MIGRATED_REFERENCE_IDS: frozenset[str] = frozenset({"muse-notes", "grok-bot-notes", "dot-notes", "heyclicky-notes"})
 
 
 def reference_mirror_id(relative_path: str) -> str | None:

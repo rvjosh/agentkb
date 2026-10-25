@@ -273,6 +273,7 @@ test("path roots use override, config, and portable fallbacks", async () => {
       "muse-notes/": "/home/tester/home/llm-wiki-projects/muse-notes",
       "grok-bot-notes/": "/home/tester/home/llm-wiki-projects/grok-bot-notes",
       "dot-notes/": "/home/tester/home/llm-wiki-projects/dot-notes",
+      "heyclicky-notes/": "/home/tester/home/llm-wiki-projects/heyclicky-notes",
     },
   });
   const fallback = await resolvePathRoots(
@@ -297,6 +298,7 @@ test("path roots use override, config, and portable fallbacks", async () => {
       "muse-notes/": "/home/tester/home/llm-wiki-projects/muse-notes",
       "grok-bot-notes/": "/home/tester/home/llm-wiki-projects/grok-bot-notes",
       "dot-notes/": "/home/tester/home/llm-wiki-projects/dot-notes",
+      "heyclicky-notes/": "/home/tester/home/llm-wiki-projects/heyclicky-notes",
     },
   });
 });
