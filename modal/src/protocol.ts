@@ -149,6 +149,25 @@ export interface SearchResult {
   results: SearchHit[];
 }
 
+export const DOCUMENT_COLLECTIONS = ["wiki", "wiki:source"] as const;
+export const DOCUMENT_AND_CHAT_COLLECTIONS = [
+  "wiki",
+  "wiki:source",
+  "chats",
+] as const;
+
+/** Two independent rankings of one query: by words (FTS5) and by meaning (PLAID). */
+export interface DocumentSearchResult {
+  schema: 1;
+  generation_id: string;
+  query: string;
+  k: number;
+  collections: string[];
+  words_terms: string[];
+  by_words: SearchHit[];
+  by_meaning: SearchHit[];
+}
+
 export interface BuildResult {
   schema: 1;
   generation_id: string;
@@ -787,8 +806,7 @@ function optionalString(
     : stringAt(record[key], `${path}.${key}`);
 }
 
-function validateSearchHit(value: unknown, index: number): SearchHit {
-  const path = `search.results[${index}]`;
+function validateSearchHit(value: unknown, path: string): SearchHit {
   const record = objectAt(value, path);
   const hit: SearchHit = {
     collection: stringAt(record.collection, `${path}.collection`),
@@ -826,7 +844,60 @@ export function validateSearchResult(value: unknown): SearchResult {
     generation_id: validateGenerationId(record.generation_id),
     query: stringAt(record.query, "search.query"),
     k: integerAt(record.k, "search.k", 1, 100),
-    results: record.results.map(validateSearchHit),
+    results: record.results.map((hit, index) =>
+      validateSearchHit(hit, `search.results[${index}]`)
+    ),
+  };
+}
+
+export function validateDocumentSearchResult(
+  value: unknown,
+): DocumentSearchResult {
+  const record = objectAt(value, "document search");
+  if (!Array.isArray(record.collections)) {
+    fail("document search.collections", "must be an array");
+  }
+  const collections = record.collections.map((collection, index) =>
+    stringAt(collection, `document search.collections[${index}]`)
+  );
+  const allowed = [DOCUMENT_COLLECTIONS, DOCUMENT_AND_CHAT_COLLECTIONS].find(
+    (expected) =>
+      expected.length === collections.length &&
+      expected.every((collection, index) => collections[index] === collection),
+  );
+  if (!allowed) {
+    fail(
+      "document search.collections",
+      "must be [wiki, wiki:source] or [wiki, wiki:source, chats]",
+    );
+  }
+  if (!Array.isArray(record.words_terms)) {
+    fail("document search.words_terms", "must be an array");
+  }
+  const words_terms = record.words_terms.map((term, index) =>
+    stringAt(term, `document search.words_terms[${index}]`)
+  );
+  const hits = (key: "by_words" | "by_meaning"): SearchHit[] => {
+    const list = record[key];
+    if (!Array.isArray(list)) fail(`document search.${key}`, "must be an array");
+    return list.map((hit, index) => {
+      const path = `document search.${key}[${index}]`;
+      const parsed = validateSearchHit(hit, path);
+      if (!collections.includes(parsed.collection)) {
+        fail(`${path}.collection`, `must be one of ${collections.join(", ")}`);
+      }
+      return parsed;
+    });
+  };
+  return {
+    schema: schemaAt(record.schema, "document search.schema"),
+    generation_id: validateGenerationId(record.generation_id),
+    query: stringAt(record.query, "document search.query"),
+    k: integerAt(record.k, "document search.k", 1, 100),
+    collections,
+    words_terms,
+    by_words: hits("by_words"),
+    by_meaning: hits("by_meaning"),
   };
 }
 

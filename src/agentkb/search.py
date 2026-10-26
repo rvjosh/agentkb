@@ -370,6 +370,125 @@ def search_transcript_sessions(
         fetch_k = min(eligible_count, max(fetch_k + 1, fetch_k * 2))
 
 
+DOCUMENT_COLLECTIONS = ("wiki", "wiki:source")
+DOCUMENT_AND_CHAT_COLLECTIONS = ("wiki", "wiki:source", "chats")
+
+# FTS5 trigram matches nothing for terms under three characters, and every
+# term must match, so short words and filler would sink a natural question.
+KEYWORD_STOPWORDS = frozenset(
+    """
+    how the and for with into what does that this from are was you your can
+    about when why which who there their have has had not but all any our out
+    use using were will would could should been being they them then than
+    its it's also just did
+    """.split()
+)
+_TERM_EDGE_CHARS = "()[]{}!@#$%^&*;:,.<>?/\\|`~='\"“”‘’"
+
+
+def keyword_terms(query: str) -> list[str]:
+    """Pick the words-list terms: lowercased, at least 3 chars, no filler words.
+
+    Falls back to every 3+ char term when filler removal leaves nothing.
+    """
+    tokens: list[str] = []
+    for word in query.lower().split():
+        token = word.strip(_TERM_EDGE_CHARS)
+        if len(token) >= 3 and token not in tokens:
+            tokens.append(token)
+    terms = [token for token in tokens if token not in KEYWORD_STOPWORDS]
+    return terms or tokens
+
+
+@dataclass
+class SplitSearch:
+    """Two independent rankings of the same query over the same collections."""
+
+    words_terms: list[str]
+    by_words: list[SearchResult]
+    by_meaning: list[SearchResult]
+
+
+def _result_from_document(store: IndexStore, doc, score: float) -> SearchResult:
+    return SearchResult(
+        collection=doc.collection,
+        file=store.resolve_file_path(doc.file),
+        line=doc.line,
+        score=score,
+        relative_path=doc.file,
+        name=doc.name,
+        unit_type=doc.unit_type,
+        content=doc.content,
+        raw_content=doc.raw_content,
+        title=doc.title,
+        section=doc.section,
+        tags=json.loads(doc.tags) if doc.tags else [],
+    )
+
+
+def _hydrate(
+    store: IndexStore,
+    ranking: list[tuple[int, float]],
+    collections: tuple[str, ...],
+    top_k: int,
+) -> list[SearchResult]:
+    results: list[SearchResult] = []
+    for doc_id, score in ranking:
+        doc = store.get_document_by_id(doc_id)
+        if doc is None or doc.collection not in collections:
+            continue
+        results.append(_result_from_document(store, doc, score))
+        if len(results) >= top_k:
+            break
+    return results
+
+
+def search_split(
+    store: IndexStore,
+    query_embedding: np.ndarray,
+    query_text: str,
+    *,
+    top_k: int,
+    collections: tuple[str, ...],
+    semantic_subset_ids: list[int] | tuple[int, ...] | None,
+) -> SplitSearch:
+    """Rank separately by words (FTS5 bm25) and by meaning (PLAID); no fusion.
+
+    ``semantic_subset_ids`` restricts PLAID to those documents; ``None`` means
+    the whole index. The words list is always restricted to ``collections``.
+    Words: all terms must match; when that yields fewer than ``top_k`` hits and
+    there are at least two terms, the rest is filled with any-term matches.
+    """
+    terms = keyword_terms(query_text)
+    keyword_ranking = store.keyword_search_terms(terms, collections, top_k)
+    if len(keyword_ranking) < top_k and len(terms) >= 2:
+        seen = {doc_id for doc_id, _ in keyword_ranking}
+        for doc_id, score in store.keyword_search_terms(
+            terms, collections, top_k + len(keyword_ranking), match_any=True
+        ):
+            if doc_id in seen:
+                continue
+            seen.add(doc_id)
+            keyword_ranking.append((doc_id, score))
+            if len(keyword_ranking) >= top_k:
+                break
+
+    if semantic_subset_ids is not None and not semantic_subset_ids:
+        semantic_ranking: list[tuple[int, float]] = []
+    else:
+        semantic_ranking = store.semantic_search(
+            query_embedding,
+            top_k=top_k,
+            subset_ids=None if semantic_subset_ids is None else list(semantic_subset_ids),
+        )
+
+    return SplitSearch(
+        words_terms=terms,
+        by_words=_hydrate(store, keyword_ranking, collections, top_k),
+        by_meaning=_hydrate(store, semantic_ranking, collections, top_k),
+    )
+
+
 def merge_multi_collection(
     result_lists: list[list[SearchResult]],
     top_k: int = 3,

@@ -400,6 +400,35 @@ class IndexStore:
         # FTS5 rank is negative (lower is better), convert to positive score
         return [(row["id"], -row["rank"]) for row in rows]
 
+    def keyword_search_terms(
+        self,
+        terms: list[str],
+        collections: tuple[str, ...] | list[str],
+        limit: int,
+        *,
+        match_any: bool = False,
+    ) -> list[tuple[int, float]]:
+        """FTS5 search for literal terms within the given collections.
+
+        Every term is quoted. All terms must match unless ``match_any``.
+        Returns (doc_id, positive bm25 score) in rank order.
+        """
+        if not terms or not collections or limit < 1:
+            return []
+        quoted = ['"' + term.replace('"', '""') + '"' for term in terms]
+        match = (" OR " if match_any else " ").join(quoted)
+        placeholders = ", ".join("?" for _ in collections)
+        rows = self._connect().execute(
+            f"""SELECT d.id, f.rank
+                FROM documents_fts f
+                JOIN documents d ON d.id = f.rowid
+                WHERE documents_fts MATCH ? AND d.collection IN ({placeholders})
+                ORDER BY f.rank
+                LIMIT ?""",
+            (match, *collections, limit),
+        ).fetchall()
+        return [(row["id"], -row["rank"]) for row in rows]
+
     def document_count(self, collection: str | None = None) -> int:
         conn = self._connect()
         if collection:

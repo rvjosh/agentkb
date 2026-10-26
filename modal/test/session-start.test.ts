@@ -20,6 +20,7 @@ class HookClient implements AgentKbClient {
   async warm(): Promise<WarmResult> { throw new Error("unused"); }
   async warmDetached(): Promise<void> { this.warmed += 1; }
   async search(): Promise<SearchResult> { throw new Error("unused"); }
+  async searchDocuments(): Promise<never> { throw new Error("unused"); }
   async build(): Promise<BuildResult> { throw new Error("unused"); }
   async prunePrevious(): Promise<PrunePreviousResult> { throw new Error("unused"); }
   close(): void { this.closed += 1; }

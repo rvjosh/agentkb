@@ -24,6 +24,7 @@ import {
 import {
   assertJsonSerializable,
   createGenerationId,
+  type DocumentSearchResult,
   type SearchHit,
   type SearchResult,
   validateGenerationId,
@@ -58,6 +59,18 @@ export interface CliMetadataSearchResult extends Omit<SearchResult, "results"> {
   results: CliMetadataSearchHit[];
 }
 
+export interface CliDocumentSearchResult {
+  schema: 1;
+  generation_id: string;
+  query: string;
+  k: number;
+  searched: string[];
+  words_terms: string[];
+  by_words: CliSearchHit[] | CliMetadataSearchHit[];
+  by_meaning: CliSearchHit[] | CliMetadataSearchHit[];
+  hint: string;
+}
+
 export interface CliDependencies {
   refresh: RefreshDependencies;
   makeCurrent: MakeCurrentDependencies;
@@ -82,25 +95,26 @@ export const defaultCliDependencies: CliDependencies = {
 
 export function usage(): string {
   return [
-    "agentkb-modal - private AgentKB Modal control plane",
+    "agentkb - private AgentKB Modal control plane (agentkb-modal is an alias)",
     "",
     "Usage:",
-    "  agentkb-modal status",
-    "  agentkb-modal generations --json",
-    "  agentkb-modal find-session --source <claude|codex|cursor|pi|opencode|openclaw|heyclicky|grok-bot> --session-id <id> --json",
-    "  agentkb-modal delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
-    "  agentkb-modal delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
-    "  agentkb-modal warm",
-    "  agentkb-modal search --query <text> [--k <1-100>] [--transcript-sessions] [--full-content | --metadata-only]",
-    "  agentkb-modal refresh [--wiki-path <path>]",
-    "  agentkb-modal make-current [--wiki-path <path>] [--json]",
-    "  agentkb-modal build --generation-id <id>",
-    "  agentkb-modal prune-previous --generation-id <id> [--dry-run] [--force]",
-    "  agentkb-modal cost [--days <1-7>]",
-    "  agentkb-modal generation-id",
-    "  agentkb-modal -h | --help",
-    "  agentkb-modal --version",
+    "  agentkb status",
+    "  agentkb generations --json",
+    "  agentkb find-session --source <claude|codex|cursor|pi|opencode|openclaw|heyclicky|grok-bot> --session-id <id> --json",
+    "  agentkb delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
+    "  agentkb delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
+    "  agentkb warm",
+    "  agentkb search --query <text> [--k <1-100>] [--include-chats | --transcript-sessions] [--full-content | --metadata-only]",
+    "  agentkb refresh [--wiki-path <path>]",
+    "  agentkb make-current [--wiki-path <path>] [--json]",
+    "  agentkb build --generation-id <id>",
+    "  agentkb prune-previous --generation-id <id> [--dry-run] [--force]",
+    "  agentkb cost [--days <1-7>]",
+    "  agentkb generation-id",
+    "  agentkb -h | --help",
+    "  agentkb --version",
     "",
+    "Search returns two separate lists over wiki pages and sources: by_words (exact words, keyword rank) and by_meaning (semantic rank). --include-chats adds agent chats to both lists.",
     "Search content is limited to 1,200 characters by default; --full-content widens it and --metadata-only omits it.",
     "Generation deletion is dry-run by default and requires --force to mutate.",
     "Cost reports are hourly metered usage for app description \"agentkb\".",
@@ -108,7 +122,7 @@ export function usage(): string {
 }
 
 function usageError(message: string): UsageError {
-  return new UsageError(`${message}\nrun 'agentkb-modal --help' for usage.`);
+  return new UsageError(`${message}\nrun 'agentkb --help' for usage.`);
 }
 
 function option(args: string[], name: string): string | undefined {
@@ -158,35 +172,97 @@ function writeJson(output: Output, value: unknown): void {
   output(JSON.stringify(assertJsonSerializable(value), null, 2));
 }
 
+function shapeHit(hit: SearchHit, fullContent: boolean): CliSearchHit {
+  if (
+    fullContent ||
+    hit.content === undefined ||
+    hit.content.length <= DEFAULT_CONTENT_LIMIT
+  ) {
+    return { ...hit, content_truncated: false };
+  }
+  return {
+    ...hit,
+    content: `${hit.content.slice(0, DEFAULT_CONTENT_LIMIT - 1)}…`,
+    content_truncated: true,
+  };
+}
+
+function metadataOnlyHit({
+  content: _content,
+  ...metadata
+}: SearchHit): CliMetadataSearchHit {
+  return metadata;
+}
+
 export function shapeSearchResult(
   result: SearchResult,
   fullContent: boolean,
 ): CliSearchResult {
   return {
     ...result,
-    results: result.results.map((hit) => {
-      if (
-        fullContent ||
-        hit.content === undefined ||
-        hit.content.length <= DEFAULT_CONTENT_LIMIT
-      ) {
-        return { ...hit, content_truncated: false };
-      }
-      return {
-        ...hit,
-        content: `${hit.content.slice(0, DEFAULT_CONTENT_LIMIT - 1)}…`,
-        content_truncated: true,
-      };
-    }),
+    results: result.results.map((hit) => shapeHit(hit, fullContent)),
   };
 }
 
 export function metadataOnlySearchResult(
   result: SearchResult,
 ): CliMetadataSearchResult {
+  return { ...result, results: result.results.map(metadataOnlyHit) };
+}
+
+/** Quote for a POSIX shell: single quotes, embedded ' as '\''. */
+export function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** g-YYYYMMDDTHHMMSSZ-... -> "YYYY-MM-DD HH:MM UTC". */
+export function indexBuildTime(generationId: string): string {
+  const match = /^g-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})\d{2}Z-/.exec(generationId);
+  if (!match) return "at an unknown time";
+  const [, year, month, day, hour, minute] = match;
+  return `${year}-${month}-${day} ${hour}:${minute} UTC`;
+}
+
+export function searchHint(
+  mode: "documents" | "include-chats" | "transcript-sessions",
+  query: string,
+  generationId: string,
+): string {
+  const q = shellQuote(query);
+  const built = indexBuildTime(generationId);
+  switch (mode) {
+    case "documents":
+      return `Not searched: chats (agent sessions). Include them: agentkb search --query ${q} --include-chats · today's chats by exact words: agent-history search ${q}`;
+    case "include-chats":
+      return `Chats come from the nightly index built ${built}; for chats since then: agent-history search ${q}`;
+    case "transcript-sessions":
+      return `Searched chats only (nightly index built ${built}). Documents: agentkb search --query ${q} · today's chats by exact words: agent-history search ${q}`;
+  }
+}
+
+export function shapeDocumentSearchResult(
+  result: DocumentSearchResult,
+  content: "bounded" | "full" | "metadata",
+  includeChats: boolean,
+): CliDocumentSearchResult {
+  const shape = (hits: SearchHit[]) =>
+    content === "metadata"
+      ? hits.map(metadataOnlyHit)
+      : hits.map((hit) => shapeHit(hit, content === "full"));
   return {
-    ...result,
-    results: result.results.map(({ content: _content, ...metadata }) => metadata),
+    schema: result.schema,
+    generation_id: result.generation_id,
+    query: result.query,
+    k: result.k,
+    searched: result.collections,
+    words_terms: result.words_terms,
+    by_words: shape(result.by_words),
+    by_meaning: shape(result.by_meaning),
+    hint: searchHint(
+      includeChats ? "include-chats" : "documents",
+      result.query,
+      result.generation_id,
+    ),
   };
 }
 
@@ -301,6 +377,7 @@ export async function runCli(
           "--query": "value",
           "--k": "value",
           "--transcript-sessions": "boolean",
+          "--include-chats": "boolean",
           "--full-content": "boolean",
           "--metadata-only": "boolean",
         });
@@ -312,6 +389,12 @@ export async function runCli(
           );
         }
         const transcriptSessions = args.includes("--transcript-sessions");
+        const includeChats = args.includes("--include-chats");
+        if (transcriptSessions && includeChats) {
+          throw usageError(
+            "--include-chats cannot be combined with --transcript-sessions",
+          );
+        }
         const request = validateUsage(() =>
           validateSearchRequest({
             query: option(args, "--query"),
@@ -321,17 +404,33 @@ export async function runCli(
         );
         const roots = await dependencies.resolveRoots();
         client = clientFactory(roots);
-        const result = await client.search(
-          request.query,
-          request.k,
-          request.transcript_sessions,
-        );
-        writeJson(
-          output,
-          metadataOnly
+        if (!transcriptSessions) {
+          const result = await client.searchDocuments(
+            request.query,
+            request.k,
+            includeChats,
+          );
+          writeJson(
+            output,
+            shapeDocumentSearchResult(
+              result,
+              metadataOnly ? "metadata" : fullContent ? "full" : "bounded",
+              includeChats,
+            ),
+          );
+          return;
+        }
+        const result = await client.search(request.query, request.k, true);
+        writeJson(output, {
+          ...(metadataOnly
             ? metadataOnlySearchResult(result)
-            : shapeSearchResult(result, fullContent),
-        );
+            : shapeSearchResult(result, fullContent)),
+          hint: searchHint(
+            "transcript-sessions",
+            result.query,
+            result.generation_id,
+          ),
+        });
         return;
       }
       case "refresh": {

@@ -10,6 +10,7 @@ import {
 } from "../src/cli";
 import type {
   BuildResult,
+  DocumentSearchResult,
   PrunePreviousResult,
   SearchResult,
   StatusResponse,
@@ -158,6 +159,26 @@ class FakeClient implements AgentKbClient {
     };
   }
 
+  async searchDocuments(
+    query: string,
+    k: number,
+    includeChats: boolean,
+  ): Promise<DocumentSearchResult> {
+    this.calls.push(["searchDocuments", query, k, includeChats]);
+    return {
+      schema: 1,
+      generation_id: ID,
+      query,
+      k,
+      collections: includeChats
+        ? ["wiki", "wiki:source", "chats"]
+        : ["wiki", "wiki:source"],
+      words_terms: [],
+      by_words: [],
+      by_meaning: [],
+    };
+  }
+
   async build(generationId: string): Promise<BuildResult> {
     this.calls.push(["build", generationId]);
     return {
@@ -207,20 +228,45 @@ class FakeClient implements AgentKbClient {
   }
 }
 
-test("routes search with parsed and default k", async () => {
+test("default search is documents-only, two lists, hint last and runnable", async () => {
   const client = new FakeClient();
   const output: string[] = [];
-  await runCli(
-    ["search", "--query", "private knowledge"],
-    () => client,
-    (line) => output.push(line),
-  );
-  expect(client.calls).toEqual([["search", "private knowledge", 10]]);
+  const query = "what's Josh's retry plan";
+  await runCli(["search", "--query", query], () => client, (line) => output.push(line));
+  expect(client.calls).toEqual([["searchDocuments", query, 10, false]]);
   expect(client.closed).toBeTrue();
-  expect(JSON.parse(output[0]!)).toMatchObject({
-    query: "private knowledge",
-    k: 10,
-  });
+  const parsed = JSON.parse(output[0]!);
+  expect(Object.keys(parsed)).toEqual([
+    "schema",
+    "generation_id",
+    "query",
+    "k",
+    "searched",
+    "words_terms",
+    "by_words",
+    "by_meaning",
+    "hint",
+  ]);
+  expect(parsed.searched).toEqual(["wiki", "wiki:source"]);
+  const quoted = `'what'\\''s Josh'\\''s retry plan'`;
+  expect(parsed.hint).toContain(`agentkb search --query ${quoted} --include-chats`);
+  expect(parsed.hint).toContain(`agent-history search ${quoted}`);
+  // The quoted form must round-trip through a real shell to the exact query.
+  const echoed = Bun.spawnSync(["sh", "-c", `printf %s ${quoted}`]).stdout.toString();
+  expect(echoed).toBe(query);
+
+  const chats = new FakeClient();
+  const chatOutput: string[] = [];
+  await runCli(
+    ["search", "--query", "x", "--k", "3", "--include-chats"],
+    () => chats,
+    (line) => chatOutput.push(line),
+  );
+  expect(chats.calls).toEqual([["searchDocuments", "x", 3, true]]);
+  const chatParsed = JSON.parse(chatOutput[0]!);
+  expect(chatParsed.searched).toEqual(["wiki", "wiki:source", "chats"]);
+  expect(chatParsed.hint).toContain("nightly index built 2026-07-25 12:34 UTC");
+  expect(Object.keys(chatParsed).at(-1)).toBe("hint");
 });
 
 test("routes transcript session search only when explicitly enabled", async () => {
@@ -306,14 +352,13 @@ test("bounds search content and preserves every other localized result field", (
 test("--full-content preserves content and makes exactly one search call", async () => {
   const client = new FakeClient();
   const content = "z".repeat(DEFAULT_CONTENT_LIMIT + 1);
-  client.search = async (query: string, k: number): Promise<SearchResult> => {
-    client.calls.push(["search", query, k]);
-    return {
-      schema: 1,
-      generation_id: ID,
-      query,
-      k,
-      results: [{
+  client.searchDocuments = async (
+    query: string,
+    k: number,
+    includeChats: boolean,
+  ): Promise<DocumentSearchResult> => {
+    client.calls.push(["searchDocuments", query, k, includeChats]);
+    const hit = {
         collection: "wiki",
         file: "/local/wiki/result.md",
         path: "/local/wiki/result.md",
@@ -322,7 +367,16 @@ test("--full-content preserves content and makes exactly one search call", async
         line: 1,
         score: 1,
         content,
-      }],
+    };
+    return {
+      schema: 1,
+      generation_id: ID,
+      query,
+      k,
+      collections: ["wiki", "wiki:source"],
+      words_terms: ["wide"],
+      by_words: [hit],
+      by_meaning: [hit],
     };
   };
   const output: string[] = [];
@@ -333,9 +387,10 @@ test("--full-content preserves content and makes exactly one search call", async
     (line) => output.push(line),
   );
 
-  expect(client.calls).toEqual([["search", "wide", 1]]);
+  expect(client.calls).toEqual([["searchDocuments", "wide", 1, false]]);
   expect(JSON.parse(output[0]!)).toMatchObject({
-    results: [{ content, content_truncated: false }],
+    by_words: [{ content, content_truncated: false }],
+    by_meaning: [{ content, content_truncated: false }],
   });
 });
 
@@ -378,13 +433,26 @@ test("--metadata-only preserves the envelope, metadata, and backend order", asyn
   const output: string[] = [];
 
   await runCli(
-    ["search", "--query", "identities", "--k", "2", "--metadata-only"],
+    [
+      "search",
+      "--query",
+      "identities",
+      "--k",
+      "2",
+      "--metadata-only",
+      "--transcript-sessions",
+    ],
     () => client,
     (line) => output.push(line),
   );
 
   expect(client.calls).toEqual([["search", "identities", 2]]);
   const parsed = JSON.parse(output[0]!);
+  expect(Object.keys(parsed).at(-1)).toBe("hint");
+  expect(parsed.hint).toBe(
+    "Searched chats only (nightly index built 2026-07-25 12:34 UTC). Documents: agentkb search --query 'identities' · today's chats by exact words: agent-history search 'identities'",
+  );
+  delete parsed.hint;
   expect(parsed).toEqual({
     schema: 1,
     generation_id: ID,
@@ -433,6 +501,7 @@ test("search content flags conflict with usage status and flags stay strict", as
     ],
     ["search", "--query", "x", "--metadata-only", "--metadata-only"],
     ["search", "--query", "x", "--unknown"],
+    ["search", "--query", "x", "--include-chats", "--transcript-sessions"],
   ]) {
     const client = new FakeClient();
     const errors: string[] = [];
@@ -446,7 +515,7 @@ test("search content flags conflict with usage status and flags stay strict", as
       }),
     ).toBe(2);
     expect(client.calls).toEqual([]);
-    expect(errors.join("")).toContain("agentkb-modal --help");
+    expect(errors.join("")).toContain("agentkb --help");
   }
 });
 
@@ -703,7 +772,7 @@ test("help wins anywhere and executable boundary classifies failures", async () 
       dependencies: defaultCliDependencies,
     }),
   ).toBe(2);
-  expect(errors.join("")).toContain("agentkb-modal --help");
+  expect(errors.join("")).toContain("agentkb --help");
 
   expect(
     await runMain({

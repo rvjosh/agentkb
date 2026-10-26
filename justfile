@@ -12,11 +12,11 @@ install-tool:
 
 # Index everything (wiki + chats + communications)
 index-all:
-    uv run agentkb index
+    uv run agentkb-local index
 
 # Run search
 search query:
-    uv run agentkb search "{{query}}"
+    uv run agentkb-local search "{{query}}"
 
 # Bump version (major|minor|patch, default minor), build, publish to PyPI, commit, push
 release bump="minor":

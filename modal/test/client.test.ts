@@ -107,11 +107,11 @@ test("search reconstructs local paths solely from relative_path", async () => {
   ).toEqual([
     {
       session_ref: "x:session-1",
-      read_with: "agent-history-central library-session x:session-1 --json",
+      read_with: "agent-history library-session x:session-1 --json",
     },
     {
       session_ref: "p:session-2",
-      read_with: "agent-history-central library-session p:session-2 --json",
+      read_with: "agent-history library-session p:session-2 --json",
     },
   ]);
   expect(JSON.stringify(result)).not.toContain("/root/");
@@ -124,16 +124,28 @@ test("search preserves the old remote call and opts into the third argument", as
     functions: {
       fromName: async (...args: unknown[]) => {
         calls.push(["fromName", ...args]);
+        const documents = args[1] === "search_documents_current";
         return {
           remote: async (args: unknown[]) => {
             calls.push(["remote", args]);
-            return {
-              schema: 1,
-              generation_id: ID,
-              query: "test",
-              k: 3,
-              results: [],
-            };
+            const envelope = { schema: 1, generation_id: ID, query: "test", k: 3 };
+            return documents
+              ? {
+                  ...envelope,
+                  collections: ["wiki", "wiki:source"],
+                  words_terms: ["test"],
+                  by_words: [],
+                  by_meaning: [{
+                    collection: "chats",
+                    file: "c.md",
+                    path: "c.md",
+                    filename: "c.md",
+                    relative_path: "c.md",
+                    line: 1,
+                    score: 1,
+                  }],
+                }
+              : { ...envelope, results: [] };
           },
         };
       },
@@ -144,12 +156,18 @@ test("search preserves the old remote call and opts into the third argument", as
 
   await client.search("test", 3);
   await client.search("test", 3, true);
+  // A chat hit in a documents-only answer is a contract breach, not a result.
+  await expect(client.searchDocuments("test", 3, false)).rejects.toThrow(
+    /by_meaning\[0\]\.collection/,
+  );
 
   expect(calls).toEqual([
     ["fromName", "agentkb", "search_current"],
     ["remote", ["test", 3]],
     ["fromName", "agentkb", "search_current"],
     ["remote", ["test", 3, true]],
+    ["fromName", "agentkb", "search_documents_current"],
+    ["remote", ["test", 3, false]],
   ]);
 });
 

@@ -4,15 +4,18 @@ import {
   APP_NAME,
   type BuildResult,
   type DeleteGenerationResult,
+  type DocumentSearchResult,
   type GenerationInventory,
   type GenerationTargetType,
   type PrunePreviousResult,
+  type SearchHit,
   type SearchResult,
   type SessionPresenceResult,
   type StatusResponse,
   type WarmResult,
   validateBuildResult,
   validateDeleteGenerationResult,
+  validateDocumentSearchResult,
   validateGenerationInventory,
   validateGenerationId,
   validatePrunePreviousResult,
@@ -47,6 +50,11 @@ export interface AgentKbClient {
     k: number,
     transcriptSessions?: boolean,
   ): Promise<SearchResult>;
+  searchDocuments(
+    query: string,
+    k: number,
+    includeChats: boolean,
+  ): Promise<DocumentSearchResult>;
   build(generationId: string): Promise<BuildResult>;
   prunePrevious(
     generationId: string,
@@ -157,6 +165,31 @@ export class ModalAgentKbClient implements AgentKbClient {
     return this.#roots ? localizeSearchResult(result, this.#roots) : result;
   }
 
+  async searchDocuments(
+    query: string,
+    k: number,
+    includeChats: boolean,
+  ): Promise<DocumentSearchResult> {
+    const request = validateSearchRequest({ query, k });
+    if (typeof includeChats !== "boolean") {
+      throw new TypeError("includeChats must be a boolean");
+    }
+    const result = validateDocumentSearchResult(
+      await this.#call("search_documents_current", [
+        request.query,
+        request.k,
+        includeChats,
+      ]),
+    );
+    const roots = this.#roots;
+    if (!roots) return result;
+    return {
+      ...result,
+      by_words: result.by_words.map((hit) => localizeSearchHit(hit, roots)),
+      by_meaning: result.by_meaning.map((hit) => localizeSearchHit(hit, roots)),
+    };
+  }
+
   async build(generationId: string): Promise<BuildResult> {
     const id = validateGenerationId(generationId);
     return validateBuildResult(await this.#call("build_generation", [id]));
@@ -200,44 +233,46 @@ export function localizeSearchResult(
 ): SearchResult {
   return {
     ...result,
-    results: result.results.map((hit) => {
-      const central = CENTRAL_CHAT_PATH.exec(hit.relative_path);
-      if (hit.collection === "chats" && central) {
-        // Central transcripts are exported on the build host and never exist
-        // under the local readable root, so name the exact reader instead.
-        const [, source = "", sessionId = ""] = central;
-        const prefix = CENTRAL_LIBRARY_PREFIX[source];
-        const sessionRef = `${prefix ?? source}:${sessionId}`;
-        return {
-          ...hit,
-          file: null,
-          path: null,
-          filename: basename(hit.relative_path),
-          session_ref: sessionRef,
-          read_with: prefix
-            ? `agent-history-central library-session ${sessionRef} --json`
-            : null,
-        };
-      }
-      const external = Object.entries(roots.externalRoots)
-        .sort(([left], [right]) => right.length - left.length)
-        .find(([prefix]) => hit.relative_path.startsWith(prefix));
-      if (external) {
-        const [prefix, root] = external;
-        const path = localPath(root, hit.relative_path.slice(prefix.length));
-        return { ...hit, file: path, path, filename: basename(path) };
-      }
-      const root =
-        hit.collection === "chats"
-          ? roots.chatsReadableRoot
-          : hit.collection === "wiki" || hit.collection === "wiki:source"
-            ? roots.wikiRoot
-            : undefined;
-      if (!root) {
-        throw new TypeError(`cannot localize collection: ${hit.collection}`);
-      }
-      const path = localPath(root, hit.relative_path);
-      return { ...hit, file: path, path, filename: basename(path) };
-    }),
+    results: result.results.map((hit) => localizeSearchHit(hit, roots)),
   };
+}
+
+export function localizeSearchHit(hit: SearchHit, roots: PathRoots): SearchHit {
+  const central = CENTRAL_CHAT_PATH.exec(hit.relative_path);
+  if (hit.collection === "chats" && central) {
+    // Central transcripts are exported on the build host and never exist
+    // under the local readable root, so name the exact reader instead.
+    const [, source = "", sessionId = ""] = central;
+    const prefix = CENTRAL_LIBRARY_PREFIX[source];
+    const sessionRef = `${prefix ?? source}:${sessionId}`;
+    return {
+      ...hit,
+      file: null,
+      path: null,
+      filename: basename(hit.relative_path),
+      session_ref: sessionRef,
+      read_with: prefix
+        ? `agent-history library-session ${sessionRef} --json`
+        : null,
+    };
+  }
+  const external = Object.entries(roots.externalRoots)
+    .sort(([left], [right]) => right.length - left.length)
+    .find(([prefix]) => hit.relative_path.startsWith(prefix));
+  if (external) {
+    const [prefix, root] = external;
+    const path = localPath(root, hit.relative_path.slice(prefix.length));
+    return { ...hit, file: path, path, filename: basename(path) };
+  }
+  const root =
+    hit.collection === "chats"
+      ? roots.chatsReadableRoot
+      : hit.collection === "wiki" || hit.collection === "wiki:source"
+        ? roots.wikiRoot
+        : undefined;
+  if (!root) {
+    throw new TypeError(`cannot localize collection: ${hit.collection}`);
+  }
+  const path = localPath(root, hit.relative_path);
+  return { ...hit, file: path, path, filename: basename(path) };
 }

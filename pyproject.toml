@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-agentkb = "agentkb.cli:main"
+agentkb-local = "agentkb.cli:main"
 
 [build-system]
 requires = ["hatchling"]

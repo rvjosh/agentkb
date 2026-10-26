@@ -26,7 +26,13 @@ from agentkb.modal_backend.generations import (
     validate_generation_id,
     validate_session_key,
 )
-from agentkb.search import search, search_transcript_sessions
+from agentkb.search import (
+    DOCUMENT_AND_CHAT_COLLECTIONS,
+    DOCUMENT_COLLECTIONS,
+    search,
+    search_split,
+    search_transcript_sessions,
+)
 from agentkb.store import IndexStore
 
 
@@ -909,6 +915,11 @@ class SearchRuntime:
             self.store.validate_for_search()
             self.store._load_plaid_index()
             identity_catalog = self.store.get_document_catalog(collection="chats")
+            self.document_doc_ids = tuple(
+                doc_id
+                for collection in DOCUMENT_COLLECTIONS
+                for doc_id in self.store.get_document_ids(collection=collection)
+            )
         except BaseException:
             self.store.close()
             raise
@@ -974,6 +985,40 @@ class SearchRuntime:
             "query": query,
             "k": k,
             "results": [_wire_search_result(result) for result in results],
+        }
+
+    def search_documents(
+        self, query: str, k: int, include_chats: bool = False
+    ) -> dict[str, Any]:
+        """Two separate rankings (words, meaning) over documents, chats opt-in."""
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query must be a non-empty string")
+        if not isinstance(k, int) or isinstance(k, bool) or not 1 <= k <= 100:
+            raise ValueError("k must be an integer between 1 and 100")
+        if not isinstance(include_chats, bool):
+            raise ValueError("include_chats must be a boolean")
+        collections = (
+            DOCUMENT_AND_CHAT_COLLECTIONS if include_chats else DOCUMENT_COLLECTIONS
+        )
+        split = search_split(
+            self.store,
+            self.encoder.encode_query(query),
+            query,
+            top_k=k,
+            collections=collections,
+            semantic_subset_ids=None if include_chats else self.document_doc_ids,
+        )
+        return {
+            "schema": 1,
+            "generation_id": self.generation_id,
+            "query": query,
+            "k": k,
+            "collections": list(collections),
+            "words_terms": split.words_terms,
+            "by_words": [_wire_search_result(result) for result in split.by_words],
+            "by_meaning": [
+                _wire_search_result(result) for result in split.by_meaning
+            ],
         }
 
     def close(self) -> None:

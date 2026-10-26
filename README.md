@@ -15,6 +15,8 @@ The power is in the intersection of the stores:
 
 All source data lives in normal files (markdown, JSONL, plain directories). Indexes are ephemeral caches rebuilt from source data. Backed up to git, one repo per store.
 
+> **Command names in this checkout:** the local Python CLI installs as `agentkb-local`, so read every `agentkb ...` example below as `agentkb-local ...` (e.g. `uv run agentkb-local index`). The bare `agentkb` command is the cloud search over the Modal index; see [modal/README.md](modal/README.md).
+
 
 ## Is this for you?
 

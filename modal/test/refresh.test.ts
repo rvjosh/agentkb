@@ -64,6 +64,9 @@ class RefreshClient implements AgentKbClient {
   async search(): Promise<SearchResult> {
     throw new Error("not used");
   }
+  async searchDocuments(): Promise<never> {
+    throw new Error("not used");
+  }
   async build(generationId: string): Promise<BuildResult> {
     this.buildCalls.push(generationId);
     if (this.failBuild) throw new Error("build failed");
