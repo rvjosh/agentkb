@@ -74,6 +74,7 @@ export const GIT_BACKED_SOURCES: readonly { sourceId: string; repo: string }[] =
   { sourceId: "grok-bot-notes", repo: "rvjosh/grok-bot-notes" },
   { sourceId: "dot-notes", repo: "rvjosh/dot-notes" },
   { sourceId: "heyclicky-notes", repo: "rvjosh/heyclicky-notes" },
+  { sourceId: "littlebird-notes", repo: "rvjosh/littlebird-notes" },
 ];
 
 export const GIT_BACKED_SOURCE_IDS: readonly string[] = GIT_BACKED_SOURCES.map(

@@ -60,7 +60,7 @@ layout. Do not schedule the two routes to overlap: they share one Mini-admin-sid
 staging directory and there is no Mini-admin-side lock serialising them.
 
 Source modes are `upstream`, `projection`, `human-dependent`, and
-`disabled-costly`. Readwise Tweets, GitHub Stars, and the four git-backed notes
+`disabled-costly`. Readwise Tweets, GitHub Stars, and the five git-backed notes
 repos are the wiki upstream refreshes in the daily path. YouTube, historical chat exports, and Reddit are
 validated as durable projections; the job never runs browser-cookie, OAuth,
 X, or Gemini work. A failed safe upstream may publish only when its existing
@@ -76,7 +76,7 @@ covers the complete run; live overlap exits 75 without source work.
 
 ### Git-backed notes sources
 
-`muse-notes`, `grok-bot-notes`, `dot-notes`, and `heyclicky-notes` publish straight from their own local git
+`muse-notes`, `grok-bot-notes`, `dot-notes`, `heyclicky-notes`, and `littlebird-notes` publish straight from their own local git
 checkouts (default `~/home/llm-wiki-projects/<id>`, overridable with
 `source_paths.<id>`). Their documents are stored under the `<id>/` prefix in
 `wiki:source`, and search results localize back to the checkout so an agent can
