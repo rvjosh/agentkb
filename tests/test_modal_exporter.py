@@ -767,3 +767,76 @@ def test_ref_mirror_still_indexed_when_the_plan_has_no_external_source(
     assert "sources/refs/muse-notes/note.md" in files
     assert "muse-notes/note.md" not in files
     assert "sources/refs/some-other-ref/keep.md" in files
+
+
+def test_git_source_include_publishes_only_the_chosen_folders(tmp_path, monkeypatch):
+    wiki_root = tmp_path / "wiki-root"
+    chats_root = tmp_path / "chats-root"
+    output = tmp_path / "agentkb-modal-refresh-output"
+    output.mkdir()
+    _write_corpus(wiki_root, chats_root)
+    layouts = {
+        "eod-close": (
+            ["closes"],
+            {
+                "closes/2026-10-23.md": True,
+                "closes/evals/run.md": True,
+                "skills/eod-close/SKILL.md": False,
+                "README.md": False,
+            },
+        ),
+        "tools-ts": (
+            ["docs", "tools.md"],
+            {
+                "docs/agentkb.md": True,
+                "tools.md": True,
+                "docs-old/stale.md": False,
+                "packages/agentkb/README.md": False,
+                ".claude/skills/x/SKILL.md": False,
+            },
+        ),
+        "muse-notes": (None, {"anywhere/note.md": True, "README.md": True}),
+    }
+    plan = _notes_plan(tmp_path, externalise=False)
+    template = plan["sources"][0]
+    plan["sources"] = []
+    for source_id, (include, files) in layouts.items():
+        checkout = tmp_path / "checkouts" / source_id
+        for relative, _ in files.items():
+            path = checkout / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"---\ntitle: {relative}\n---\n# {relative}\nBody.\n")
+        export_root = {
+            "path": str(checkout),
+            "collection": "wiki:source",
+            "prefix": f"{source_id}/",
+            "kind": "markdown",
+        }
+        if include is not None:
+            export_root["include"] = include
+        plan["sources"].append(
+            {**template, "source_id": source_id, "root": str(checkout),
+             "source_file_count": len(files), "export_roots": [export_root]}
+        )
+
+    monkeypatch.setattr(exporter, "prepare_chats", lambda root: root / "readable")
+    exporter.export_corpus(
+        generation_id=GENERATION_ID,
+        wiki_root=wiki_root,
+        chats_root=chats_root,
+        output_dir=output,
+        exported_at=datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc),
+        source_plan=plan,
+    )
+    exported = {
+        json.loads(line)["file"]
+        for line in (output / "corpus.jsonl").read_bytes().splitlines()
+    }
+    receipts = {
+        item["source_id"]: item
+        for item in json.loads((output / "manifest.json").read_text())["sources"]["items"]
+    }
+    for source_id, (_, files) in layouts.items():
+        expected = {f"{source_id}/{name}" for name, keep in files.items() if keep}
+        assert {name for name in exported if name.startswith(f"{source_id}/")} == expected
+        assert receipts[source_id]["source_file_count"] == len(expected)

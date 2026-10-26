@@ -149,15 +149,30 @@ def _records_for_entry(
         yield record
 
 
+def _included(relative_file: str, include: list[str] | None) -> bool:
+    """An include entry names a file, or a folder and everything under it.
+
+    Must agree with ``pathIsIncluded`` in ``modal/src/make-current.ts``, which
+    counts the same files for the source's freshness receipt.
+    """
+    return include is None or any(
+        relative_file == entry or relative_file.startswith(f"{entry}/")
+        for entry in include
+    )
+
+
 def _markdown_records(
     *,
     root: Path,
     collection: str,
     stored_prefix: str,
+    include: list[str] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     spec = CHAT_SPEC if collection == "chats" else WIKI_SPEC
     entries = list_markdown_files(root, collection=collection)
     for relative_file, entry in sorted(entries.items()):
+        if not _included(Path(relative_file).as_posix(), include):
+            continue
         for record in _records_for_entry(
             root,
             spec,
@@ -173,11 +188,11 @@ def _jsonl_records(
     root: Path,
     collection: str,
     stored_prefix: str,
-    include: set[str] | None = None,
+    include: list[str] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     for path in sorted(root.rglob("*.jsonl")):
         relative_file = path.relative_to(root).as_posix()
-        if include is not None and relative_file not in include:
+        if not _included(relative_file, include):
             continue
         stored_file = f"{stored_prefix}{relative_file}"
         with path.open(encoding="utf-8") as handle:
@@ -801,22 +816,20 @@ def export_corpus(
                 collection = export_root["collection"]
                 prefix = export_root["prefix"]
                 kind = export_root.get("kind", "markdown")
+                include = export_root.get("include")
                 iterator = (
                     _markdown_records(
                         root=root,
                         collection=collection,
                         stored_prefix=prefix,
+                        include=include,
                     )
                     if kind == "markdown"
                     else _jsonl_records(
                         root=root,
                         collection=collection,
                         stored_prefix=prefix,
-                        include=(
-                            set(export_root["include"])
-                            if export_root.get("include")
-                            else None
-                        ),
+                        include=include,
                     )
                 )
                 for relative_file, record in iterator:

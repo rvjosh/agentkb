@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import { defaultCliDependencies, runMain } from "../src/cli";
 import {
   GIT_BACKED_SOURCE_IDS,
   assertNoLargeCollapse,
+  defaultMakeCurrentDependencies,
   gitRemoteMatches,
   makeCurrent,
   resolveSourceRegistry,
@@ -557,7 +558,7 @@ test("bounded subprocess terminates after its timeout", async () => {
 });
 
 
-test("registry publishes both notes repos as git-backed external sources", async () => {
+test("registry publishes every git-backed repo, limiting only the code repos", async () => {
   const registry = await resolveSourceRegistry(undefined, {
     home: "/home/tester",
     readConfig: async () => "{}",
@@ -573,15 +574,60 @@ test("registry publishes both notes repos as git-backed external sources", async
     expect(entry!.mode).toBe("upstream");
     expect(entry!.required).toBe(true);
     expect(entry!.root).toBe(`/home/tester/home/llm-wiki-projects/${sourceId}`);
+    const include = (
+      { "eod-close": ["closes"], "tools-ts": ["docs", "tools.md"] } as Record<string, string[]>
+    )[sourceId];
     expect(entry!.exportRoots).toEqual([
       {
         path: `/home/tester/home/llm-wiki-projects/${sourceId}`,
         collection: "wiki:source",
         prefix: `${sourceId}/`,
         kind: "markdown",
+        ...(include === undefined ? {} : { include }),
       },
     ]);
+    expect("include" in entry!.exportRoots[0]!).toBe(include !== undefined);
   }
+});
+
+async function eodCloseRunWith(files: string[]) {
+  const checkout = join(await mkdtemp(join(tmpdir(), "agentkb-include-")), "eod-close");
+  for (const file of files) {
+    await mkdir(join(checkout, file, ".."), { recursive: true });
+    await writeFile(join(checkout, file), "# note\n");
+  }
+  const state = dependencies({ config: { source_paths: { "eod-close": checkout } } });
+  const fixtureScan = state.deps.scan;
+  state.deps.scan = (roots, options) =>
+    roots[0] === checkout
+      ? defaultMakeCurrentDependencies.scan(roots, options)
+      : fixtureScan(roots, options);
+  try {
+    return await makeCurrent(client, undefined, state.deps);
+  } finally {
+    await rm(join(checkout, ".."), { recursive: true, force: true });
+  }
+}
+
+test("an include list counts only included markdown toward the source receipt", async () => {
+  const result = await eodCloseRunWith([
+    "closes/2026-10-23.md",
+    "closes/retros/week.md",
+    "closes-draft/x.md",
+    "skills/eod-close/SKILL.md",
+    "README.md",
+  ]);
+  expect(result.exitCode).toBe(0);
+  const receipt = result.receipt.sources.find((s) => s.source_id === "eod-close");
+  expect(receipt!.state).toBe("fresh");
+  expect(receipt!.source_file_count).toBe(2);
+});
+
+test("an include list that matches nothing fails like an empty checkout", async () => {
+  const result = await eodCloseRunWith(["skills/eod-close/SKILL.md", "README.md"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.receipt.published).toBe(false);
+  expect(result.receipt.error).toContain("eod-close durable projection is empty");
 });
 
 test("notes repo roots honour source_paths overrides", async () => {

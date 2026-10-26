@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 
 import type { AgentKbClient } from "./client";
 import {
@@ -69,13 +69,37 @@ const HISTORY_ARCHIVE_SCHEMAS: ReadonlySet<number> = new Set([5, 6, 7, 8, 9]);
 // check a stray `source_paths` entry pointing at any directory containing
 // markdown would publish under this source id, and a failed `git pull` there
 // would look like an ordinary degraded refresh instead of misconfiguration.
-export const GIT_BACKED_SOURCES: readonly { sourceId: string; repo: string }[] = [
+//
+// `include` limits a repo that is mostly code to the folders worth searching.
+// See `pathIsIncluded`. Without it the whole checkout's markdown publishes.
+export interface GitBackedSource {
+  sourceId: string;
+  repo: string;
+  include?: string[];
+}
+
+export const GIT_BACKED_SOURCES: readonly GitBackedSource[] = [
   { sourceId: "muse-notes", repo: "rvjosh/muse-notes" },
   { sourceId: "grok-bot-notes", repo: "rvjosh/grok-bot-notes" },
   { sourceId: "dot-notes", repo: "rvjosh/dot-notes" },
   { sourceId: "heyclicky-notes", repo: "rvjosh/heyclicky-notes" },
   { sourceId: "littlebird-notes", repo: "rvjosh/littlebird-notes" },
+  { sourceId: "eod-close", repo: "rvjosh/eod-close", include: ["closes"] },
+  { sourceId: "tools-ts", repo: "rvjosh/tools-ts", include: ["docs", "tools.md"] },
 ];
+
+// An include entry names a repo-relative file, or a folder and everything
+// under it. The Python exporter's `_included` must agree, or the freshness
+// count and the published files drift apart.
+function pathIsIncluded(
+  relativePath: string,
+  include: readonly string[] | undefined,
+): boolean {
+  return (
+    include === undefined ||
+    include.some((entry) => relativePath === entry || relativePath.startsWith(`${entry}/`))
+  );
+}
 
 export const GIT_BACKED_SOURCE_IDS: readonly string[] = GIT_BACKED_SOURCES.map(
   (source) => source.sourceId,
@@ -187,14 +211,20 @@ async function refreshGitBackedSource(
   };
 }
 
-function includeInScan(sourceId: string, path: string): boolean {
-  if (isGitBackedSource(sourceId)) {
-    // Markdown only. The export root publishes `.md`, and counting `.git`
-    // internals would inflate source_file_count and peg the freshness
-    // timestamp to the last fetch rather than the newest note.
-    return path.endsWith(".md") && !path.split(sep).includes(".git");
+function includeInScan(entry: SourceRegistryEntry, path: string): boolean {
+  if (isGitBackedSource(entry.sourceId)) {
+    // Markdown only, and only what the export root publishes. Counting `.git`
+    // internals would peg the freshness timestamp to the last fetch, and
+    // counting excluded folders would inflate source_file_count and let an
+    // include that matches nothing pass as a nonempty source.
+    const relativePath = relative(entry.root, path).split(sep).join("/");
+    return (
+      path.endsWith(".md") &&
+      !relativePath.split("/").includes(".git") &&
+      pathIsIncluded(relativePath, entry.exportRoots[0]?.include)
+    );
   }
-  if (sourceId !== "youtube-saved") return true;
+  if (entry.sourceId !== "youtube-saved") return true;
   return (
     path.endsWith(".md") ||
     basename(path) === "watch-history-latest.jsonl" ||
@@ -558,7 +588,7 @@ export async function resolveSourceRegistry(
           join(wikiRoot, "sources", "reddit-saved"),
         ],
       },
-      ...GIT_BACKED_SOURCE_IDS.map((sourceId) => ({
+      ...GIT_BACKED_SOURCES.map(({ sourceId, include }) => ({
         sourceId,
         mode: "upstream" as const,
         root: notesRoots[sourceId]!,
@@ -568,6 +598,7 @@ export async function resolveSourceRegistry(
           collection: "wiki:source" as const,
           prefix: `${sourceId}/`,
           kind: "markdown" as const,
+          ...(include === undefined ? {} : { include }),
         }],
       })),
       {
@@ -1221,7 +1252,7 @@ export async function makeCurrent(
       }
       const scanRoots = entry.representedPaths ?? [entry.root];
       const scanned = await dependencies.scan(scanRoots, {
-        include: (path) => includeInScan(entry.sourceId, path),
+        include: (path) => includeInScan(entry, path),
       });
       const commandFailed = commandResult !== null && commandResult.exitCode !== 0;
       const empty = scanned.count === 0;

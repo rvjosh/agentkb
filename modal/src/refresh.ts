@@ -129,6 +129,8 @@ export async function resolvePathRoots(
     "dot-notes/": join(home, "home", "llm-wiki-projects", "dot-notes"),
     "heyclicky-notes/": join(home, "home", "llm-wiki-projects", "heyclicky-notes"),
     "littlebird-notes/": join(home, "home", "llm-wiki-projects", "littlebird-notes"),
+    "eod-close/": join(home, "home", "llm-wiki-projects", "eod-close"),
+    "tools-ts/": join(home, "home", "llm-wiki-projects", "tools-ts"),
   };
   const externalRoots = Object.fromEntries(
     Object.entries(externalDefaults).map(([prefix, fallback]) => {
