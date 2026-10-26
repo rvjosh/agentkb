@@ -7,8 +7,9 @@ the private Volume is `agentkb-data`; there are no web endpoints.
 
 ## Production commands
 
-Use the stable `agentkb-modal` executable for normal production control-plane
-work. From a development checkout, `bun run modal/src/cli.ts ...` remains an
+Use the stable `agentkb` executable for normal production control-plane
+work (`agentkb-modal` is an alias for the same command; the old local Python CLI
+is now `agentkb-local`). From a development checkout, `bun run modal/src/cli.ts ...` remains an
 equivalent repository-local fallback.
 
 The normal answer to “refresh AgentKB” or “make it current” is:
@@ -179,11 +180,41 @@ without copying the generation, copying chunk payloads, or invoking
 FastPLAID's mutable merge loader. It does not repeat the index tree hash,
 SQLite integrity check, or full count comparison on every new container.
 
-Search and reconstruct result paths against the configured local roots:
+Search documents and reconstruct result paths against the configured local roots:
 
 ```bash
-agentkb-modal search --query "retry logic" --k 10
+agentkb search --query "retry logic" --k 10
 ```
+
+By default search covers documents only (`wiki` and `wiki:source`; no chats)
+and returns two separate ranked lists instead of one blended list:
+
+- `by_words`: SQLite FTS5 keyword matches ranked by bm25 (higher is better).
+  The query is cut down to lowercased words of 3+ characters minus common
+  filler words (the trigram index cannot match shorter words); those words are
+  reported in `words_terms`. Hits matching every word come first; if there are
+  fewer than `k`, the rest are hits matching any word.
+- `by_meaning`: PLAID/ColBERT semantic matches ranked by ColBERT score.
+
+A 2026-07-27 benchmark found that blending the two (RRF) did not help
+paraphrase recall, and chats (about 116k of 200k chunks) crowded wiki pages
+out of blended results. Widen both lists to chats with `--include-chats`:
+
+```bash
+agentkb search --query "retry logic" --k 10 --include-chats
+```
+
+The output is
+`{schema, generation_id, query, k, searched, words_terms, by_words, by_meaning, hint}`.
+`searched` lists the collections both lists covered. `hint` is always the last
+key: one ready-to-run line naming what was not searched (chats, or chats newer
+than the nightly index build time) and the command that covers it, such as
+`agent-history search '<query>'`. Hints appear only in that field, never on
+stderr.
+
+This uses the Modal function `search_documents_current(query, k, include_chats)`,
+which reads the existing generation; no rebuild is needed after deploying it.
+The older `search_current` function is unchanged so older clients keep working.
 
 Each result's `content` is limited to 1,200 JavaScript string characters by
 default. Truncated content ends with `…` within that limit and reports
@@ -192,14 +223,14 @@ default. Truncated content ends with `…` within that limit and reports
 limit when needed:
 
 ```bash
-agentkb-modal search --query "retry logic" --k 10 --full-content
+agentkb search --query "retry logic" --k 10 --full-content
 ```
 
 Request metadata without stored content when only result identity and ranking
 fields are needed:
 
 ```bash
-agentkb-modal search --query "retry logic" --k 10 --metadata-only
+agentkb search --query "retry logic" --k 10 --metadata-only
 ```
 
 For conceptual coding-agent transcript retrieval, restrict PLAID to central
@@ -207,21 +238,23 @@ agent-history documents and return one best-ranked representative chunk per
 unique session:
 
 ```bash
-agentkb-modal search --query "retry logic" --k 10 \
+agentkb search --query "retry logic" --k 10 \
   --transcript-sessions --metadata-only
 ```
 
-This mode is opt-in. Normal search continues to rank the complete
-`wiki`/`wiki:source`/`chats` corpus at chunk level. After deploying search-code
-changes, canary the grouped path without rebuilding the immutable generation:
+This mode is opt-in, calls `search_current`, and keeps its single `results`
+list, plus the trailing `hint` key. It cannot be combined with
+`--include-chats`. After deploying search-code changes, canary both paths
+without rebuilding the immutable generation:
 
 ```bash
-agentkb-modal search --query "private knowledge" --k 4 \
+agentkb search --query "private knowledge" --k 4 --metadata-only
+agentkb search --query "private knowledge" --k 4 \
   --transcript-sessions --metadata-only
 ```
 
 Metadata-only results retain the schema-1 envelope and backend result order,
-but omit both `content` and `content_truncated`. `--metadata-only` and
+but omit both `content` and `content_truncated` from every list. `--metadata-only` and
 `--full-content` cannot be combined.
 
 Generate an ID or trigger a build only for data that was staged separately:
@@ -413,7 +446,7 @@ leak into hook-facing output. Chat hits under `agent-history-central/` are the
 exception: those transcripts are exported on the build host and never exist
 locally, so `file` and `path` are `null`, `session_ref` carries the exact
 session identity (`c:`/`x:` for Claude/Codex), and `read_with` gives the
-command that reads it (`agent-history-central library-session <ref> --json`),
+command that reads it (`agent-history library-session <ref> --json`),
 or `null` for sources that command cannot read yet.
 
 ## Local verification

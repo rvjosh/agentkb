@@ -104,11 +104,13 @@ def test_adapter_exposes_only_sdk_functions_and_generation_methods():
         "delete_generation_exact",
         "warm_current",
         "search_current",
+        "search_documents_current",
     ):
         assert f"def {function_name}(" in source
     assert "@modal.method()" in source
     assert "def warm(" in source
     assert "def search(" in source
+    assert "def search_documents(" in source
     assert "transcript_sessions: bool = False" in source
     assert "if transcript_sessions:" in source
     assert "method.remote(query, k, True)" in source

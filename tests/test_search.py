@@ -30,6 +30,7 @@ from agentkb.search import (
     SearchResult,
     merge_multi_collection,
     search,
+    search_split,
     search_transcript_sessions,
 )
 from agentkb.store import Document, IndexStore
@@ -802,3 +803,57 @@ def test_cli_search_no_refresh_corrupt_plaid_preserves_every_artifact(
     assert result.exit_code == 1
     assert "--no-refresh could not use the existing wiki index" in result.output
     assert _artifact_snapshot(index_dir) == before
+
+
+# --- search_split (words list vs meaning list) ---
+# Failure modes this guards: FTS5 trigram silently matches nothing for terms
+# under 3 chars and every term must match, so a natural question with "a"/"to"
+# returned zero keyword hits; and chats leaking into a documents-only answer.
+
+
+class _FixedMeaningStore(IndexStore):
+    """Real SQLite/FTS5 store; PLAID replaced by a ranking that ignores scope."""
+
+    meaning: list[tuple[int, float]] = []
+
+    def semantic_search(self, query_embedding, top_k=50, subset_ids=None):
+        return self.meaning[:top_k]
+
+
+def test_search_split_natural_question_gets_word_hits_and_scope_holds(tmp_path):
+    store = _FixedMeaningStore(tmp_path / "idx")
+    store.create()
+    all_terms, retry, source, chat, _garden = store.add_documents([
+        {"collection": "wiki", "file": "all.md",
+         "content": "How to add a retry wrapper around the network call"},
+        {"collection": "wiki", "file": "retry.md",
+         "content": "Exponential backoff retry logic for flaky network calls"},
+        {"collection": "wiki:source", "file": "src.md",
+         "content": "Network retry policies explained"},
+        {"collection": "chats", "file": "chat.md",
+         "content": "we discussed retry logic for the network call in this chat"},
+        {"collection": "wiki", "file": "garden.md", "content": "Gardening notes"},
+    ])
+    store.meaning = [(chat, 9.0), (retry, 5.0), (source, 1.0)]
+    query = "how do I add a retry to the network call?"
+
+    documents = search_split(
+        store, None, query, top_k=10,
+        collections=("wiki", "wiki:source"), semantic_subset_ids=None,
+    )
+    assert documents.words_terms == ["add", "retry", "network", "call"]
+    words = [hit.relative_path for hit in documents.by_words]
+    assert words[0] == "all.md"  # matches every term, so it outranks partial matches
+    assert set(words) == {"all.md", "retry.md", "src.md"}
+    assert [hit.relative_path for hit in documents.by_meaning] == ["retry.md", "src.md"]
+    for hit in documents.by_words + documents.by_meaning:
+        assert hit.collection != "chats"
+
+    with_chats = search_split(
+        store, None, query, top_k=10,
+        collections=("wiki", "wiki:source", "chats"), semantic_subset_ids=None,
+    )
+    assert "chat.md" in {hit.relative_path for hit in with_chats.by_words}
+    assert with_chats.by_meaning[0].relative_path == "chat.md"
+    store.close()
+

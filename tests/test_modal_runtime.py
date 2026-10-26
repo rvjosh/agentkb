@@ -439,6 +439,9 @@ def test_search_runtime_skips_full_validation_and_reports_startup_timings(
                 )
             ]
 
+        def get_document_ids(self, collection=None):
+            return {"wiki": [1, 2], "wiki:source": [3]}.get(collection, [])
+
         def close(self):
             pass
 
@@ -483,6 +486,7 @@ def test_search_runtime_skips_full_validation_and_reports_startup_timings(
         assert all(value >= 0 for value in result["startup_timing_ms"].values())
         assert search_runtime.store.catalog_calls == 1
         assert search_runtime.transcript_session_doc_ids == (7,)
+        assert search_runtime.document_doc_ids == (1, 2, 3)
         search_runtime.search("control", 1)
         search_runtime.search("experiment", 1, True)
         search_runtime.search("experiment again", 1, True)
