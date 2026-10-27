@@ -27,7 +27,6 @@ import type { GenerationManifest } from "../src/protocol";
 const ID = "g-20260725T123456Z-001122aabbcc";
 const client = { close() {} } as AgentKbClient;
 const HOMEBREW_ZSTD = "/opt/homebrew/bin/zstd";
-let homebrewZstdSpawnPatched = false;
 
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -41,17 +40,6 @@ function resolveZstd(): string {
     throw new Error(
       "zstd not found on PATH or at /opt/homebrew/bin/zstd; install zstd (e.g. apt-get install zstd or brew install zstd) to run history generation fixtures",
     );
-  }
-  // validateHistoryGeneration still decompresses via the Homebrew path.
-  if (!homebrewZstdSpawnPatched && resolved !== HOMEBREW_ZSTD) {
-    const spawn = Bun.spawn.bind(Bun) as typeof Bun.spawn;
-    Bun.spawn = ((cmd, options) => {
-      if (Array.isArray(cmd) && cmd[0] === HOMEBREW_ZSTD) {
-        return spawn([resolved, ...cmd.slice(1)], options);
-      }
-      return spawn(cmd, options);
-    }) as typeof Bun.spawn;
-    homebrewZstdSpawnPatched = true;
   }
   return resolved;
 }

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import {
   chmod,
   lstat,
@@ -759,6 +759,20 @@ async function privateFile(path: string, size?: number): Promise<void> {
   }
 }
 
+const HOMEBREW_ZSTD = "/opt/homebrew/bin/zstd";
+
+function resolveZstd(): string {
+  const fromPath = Bun.which("zstd");
+  const resolved =
+    fromPath ?? (existsSync(HOMEBREW_ZSTD) ? HOMEBREW_ZSTD : null);
+  if (resolved === null) {
+    throw new Error(
+      "zstd not found on PATH or at /opt/homebrew/bin/zstd; install zstd (e.g. apt-get install zstd or brew install zstd) to validate central history",
+    );
+  }
+  return resolved;
+}
+
 export async function validateHistoryGeneration(
   root: string,
 ): Promise<HistoryGenerationIdentity> {
@@ -798,9 +812,10 @@ export async function validateHistoryGeneration(
     tmpdir(),
     `agentkb-history-validate-${process.pid}-${randomBytes(6).toString("hex")}.sqlite3`,
   );
+  const zstd = resolveZstd();
   try {
     const result = await runBoundedCommand(
-      ["/opt/homebrew/bin/zstd", "-d", "-q", "-f", databasePath, "-o", temporary],
+      [zstd, "-d", "-q", "-f", databasePath, "-o", temporary],
       { timeoutMs: 10 * 60_000 },
     );
     if (result.exitCode !== 0) {
