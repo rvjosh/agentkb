@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,9 +26,22 @@ import type { GenerationManifest } from "../src/protocol";
 
 const ID = "g-20260725T123456Z-001122aabbcc";
 const client = { close() {} } as AgentKbClient;
+const HOMEBREW_ZSTD = "/opt/homebrew/bin/zstd";
 
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function resolveZstd(): string {
+  const fromPath = Bun.which("zstd");
+  const resolved =
+    fromPath ?? (existsSync(HOMEBREW_ZSTD) ? HOMEBREW_ZSTD : null);
+  if (resolved === null) {
+    throw new Error(
+      "zstd not found on PATH or at /opt/homebrew/bin/zstd; install zstd (e.g. apt-get install zstd or brew install zstd) to run history generation fixtures",
+    );
+  }
+  return resolved;
 }
 
 async function historyGenerationFixture(archiveSchema: number): Promise<{
@@ -43,8 +57,9 @@ async function historyGenerationFixture(archiveSchema: number): Promise<{
   const databasePath = join(root, databaseFilename);
   const sourcePath = join(root, "database.sqlite3");
   await writeFile(sourcePath, database, { mode: 0o600 });
+  const zstd = resolveZstd();
   const compressed = Bun.spawnSync([
-    "/opt/homebrew/bin/zstd",
+    zstd,
     "-q",
     "-f",
     sourcePath,
@@ -52,7 +67,9 @@ async function historyGenerationFixture(archiveSchema: number): Promise<{
     databasePath,
   ]);
   if (compressed.exitCode !== 0) {
-    throw new Error(`cannot create history fixture: ${compressed.stderr.toString()}`);
+    throw new Error(
+      `cannot create history fixture with ${zstd}: ${compressed.stderr.toString()}`,
+    );
   }
   const compressedDatabase = await Bun.file(databasePath).bytes();
   await chmod(databasePath, 0o600);
