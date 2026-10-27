@@ -35,6 +35,10 @@ import {
 
 export const VERSION = "0.1.0";
 export const DEFAULT_CONTENT_LIMIT = 1_200;
+/** Per-file de-dup asks the server for this many times k (capped at 100). */
+export const DEDUP_OVERFETCH = 3;
+/** Filters the server's search functions accept; none yet. */
+export const SERVER_SEARCH_FILTERS: ReadonlySet<SearchFilterName> = new Set();
 export type ClientFactory = (roots?: PathRoots) => AgentKbClient;
 export type Output = (line: string) => void;
 
@@ -47,6 +51,26 @@ export class CommandExitError extends Error {
 
 export interface CliSearchHit extends SearchHit {
   content_truncated: boolean;
+}
+
+export type SearchFilterName =
+  | "author"
+  | "since"
+  | "until"
+  | "tag"
+  | "type"
+  | "collection";
+
+export type SearchFilters = Partial<Record<SearchFilterName, string>>;
+
+/**
+ * no_good_match is null unless --min-score is given: on 40 real questions no
+ * by-meaning cutoff separated helpful results from unhelpful ones.
+ */
+export interface MatchSignal {
+  no_good_match: boolean | null;
+  top_meaning_score: number | null;
+  min_score: number | null;
 }
 
 export interface CliSearchResult extends Omit<SearchResult, "results"> {
@@ -68,6 +92,8 @@ export interface CliDocumentSearchResult {
   words_terms: string[];
   by_words: CliSearchHit[] | CliMetadataSearchHit[];
   by_meaning: CliSearchHit[] | CliMetadataSearchHit[];
+  match: MatchSignal;
+  notes: string[];
   hint: string;
 }
 
@@ -104,7 +130,8 @@ export function usage(): string {
     "  agentkb delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb warm",
-    "  agentkb search --query <text> [--k <1-100>] [--include-chats | --transcript-sessions] [--full-content | --metadata-only]",
+    "  agentkb search --query <text> [--k <1-100>] [--include-chats | --transcript-sessions] [--full-content | --metadata-only] [--no-dedup] [--min-score <n>]",
+    "                 [--author <name>] [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--tag <tag>] [--type <unit-type>] [--collection <wiki|wiki:source|chats>]",
     "  agentkb refresh [--wiki-path <path>]",
     "  agentkb make-current [--wiki-path <path>] [--json]",
     "  agentkb build --generation-id <id>",
@@ -116,6 +143,9 @@ export function usage(): string {
     "",
     "Search returns two separate lists over wiki pages and sources: by_words (exact words, keyword rank) and by_meaning (semantic rank). --include-chats adds agent chats to both lists.",
     "Search content is limited to 1,200 characters by default; --full-content widens it and --metadata-only omits it.",
+    "Document search keeps the best hit per file in each list (k files, not k hits), fetching 3x k capped at 100; --no-dedup keeps every hit.",
+    "Search reports match.top_meaning_score; match.no_good_match is set only when --min-score <n> (n >= 0) is given.",
+    "Search filters (--author, --since, --until, --tag, --type, --collection) fail until the server supports them; nothing is filtered silently.",
     "Generation deletion is dry-run by default and requires --force to mutate.",
     "Cost reports are hourly metered usage for app description \"agentkb\".",
   ].join("\n");
@@ -244,26 +274,123 @@ export function shapeDocumentSearchResult(
   result: DocumentSearchResult,
   content: "bounded" | "full" | "metadata",
   includeChats: boolean,
+  options: { k?: number; dedup?: boolean; minScore?: number | undefined } = {},
 ): CliDocumentSearchResult {
-  const shape = (hits: SearchHit[]) =>
-    content === "metadata"
-      ? hits.map(metadataOnlyHit)
-      : hits.map((hit) => shapeHit(hit, content === "full"));
+  const k = options.k ?? result.k;
+  const notes: string[] = [];
+  const shape = (name: "by_words" | "by_meaning", hits: SearchHit[]) => {
+    const kept = options.dedup === false ? hits.slice(0, k) : dedupByFile(hits, k);
+    // A full fetch that still yields fewer than k files means more files may
+    // exist past the fetch limit; a short fetch just means no more matches.
+    if (options.dedup !== false && kept.length < k && hits.length >= result.k) {
+      notes.push(
+        `${name} has ${kept.length} of ${k} files after per-file de-dup of ${hits.length} fetched hits; more files may exist. Use a smaller --k or --no-dedup.`,
+      );
+    }
+    return content === "metadata"
+      ? kept.map(metadataOnlyHit)
+      : kept.map((hit) => shapeHit(hit, content === "full"));
+  };
+  const byWords = shape("by_words", result.by_words);
+  const byMeaning = shape("by_meaning", result.by_meaning);
   return {
     schema: result.schema,
     generation_id: result.generation_id,
     query: result.query,
-    k: result.k,
+    k,
     searched: result.collections,
     words_terms: result.words_terms,
-    by_words: shape(result.by_words),
-    by_meaning: shape(result.by_meaning),
+    by_words: byWords,
+    by_meaning: byMeaning,
+    match: matchSignal(result.by_meaning, options.minScore),
+    notes,
     hint: searchHint(
       includeChats ? "include-chats" : "documents",
       result.query,
       result.generation_id,
     ),
   };
+}
+
+/**
+ * Keep the first (best-ranked) hit per file, count the dropped ones among
+ * these hits on it as more_in_file, and trim to k. Lists stay in server rank
+ * order.
+ */
+export function dedupByFile<T extends SearchHit>(
+  hits: T[],
+  k: number,
+): (T & { more_in_file?: number })[] {
+  const kept = new Map<string, T & { more_in_file?: number }>();
+  for (const hit of hits) {
+    const first = kept.get(hit.relative_path);
+    if (first) {
+      first.more_in_file = (first.more_in_file ?? 0) + 1;
+    } else {
+      kept.set(hit.relative_path, { ...hit });
+    }
+  }
+  return [...kept.values()].slice(0, k);
+}
+
+export function matchSignal(
+  meaningHits: SearchHit[],
+  minScore?: number,
+): MatchSignal {
+  const top = meaningHits.length
+    ? Math.max(...meaningHits.map((hit) => hit.score))
+    : null;
+  return {
+    no_good_match:
+      minScore === undefined ? null : top === null || top < minScore,
+    top_meaning_score: top,
+    min_score: minScore ?? null,
+  };
+}
+
+const FILTER_OPTIONS: Record<`--${SearchFilterName}`, SearchFilterName> = {
+  "--author": "author",
+  "--since": "since",
+  "--until": "until",
+  "--tag": "tag",
+  "--type": "type",
+  "--collection": "collection",
+};
+const FILTER_COLLECTIONS = ["wiki", "wiki:source", "chats"];
+
+function isoDay(name: string, value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const day = match ? new Date(`${value}T00:00:00Z`) : undefined;
+  if (!day || Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== value) {
+    throw usageError(`${name} must be a date as YYYY-MM-DD`);
+  }
+  return value;
+}
+
+/** Parse and validate filter flags; fail on any the server cannot apply. */
+export function searchFilters(args: string[]): SearchFilters {
+  const filters: SearchFilters = {};
+  for (const [flag, name] of Object.entries(FILTER_OPTIONS)) {
+    const value = option(args, flag);
+    if (value === undefined) continue;
+    if (!value.trim()) throw usageError(`${flag} must not be empty`);
+    filters[name] = name === "since" || name === "until" ? isoDay(flag, value) : value;
+  }
+  if (filters.since && filters.until && filters.since > filters.until) {
+    throw usageError("--since must not be after --until");
+  }
+  if (filters.collection && !FILTER_COLLECTIONS.includes(filters.collection)) {
+    throw usageError(`--collection must be one of ${FILTER_COLLECTIONS.join(", ")}`);
+  }
+  const unsupported = (Object.keys(filters) as SearchFilterName[]).filter(
+    (name) => !SERVER_SEARCH_FILTERS.has(name),
+  );
+  if (unsupported.length) {
+    throw usageError(
+      `search filter not supported by the AgentKB server yet: ${unsupported.map((name) => `--${name}`).join(", ")}. Nothing was searched; drop the filter or add server support first.`,
+    );
+  }
+  return filters;
 }
 
 export async function runCli(
@@ -380,6 +507,11 @@ export async function runCli(
           "--include-chats": "boolean",
           "--full-content": "boolean",
           "--metadata-only": "boolean",
+          "--no-dedup": "boolean",
+          "--min-score": "value",
+          ...Object.fromEntries(
+            Object.keys(FILTER_OPTIONS).map((flag) => [flag, "value" as const]),
+          ),
         });
         const fullContent = args.includes("--full-content");
         const metadataOnly = args.includes("--metadata-only");
@@ -402,12 +534,29 @@ export async function runCli(
             ...(transcriptSessions ? { transcript_sessions: true } : {}),
           })
         );
+        const rawMinScore = option(args, "--min-score");
+        const minScore =
+          rawMinScore === undefined || !rawMinScore.trim()
+            ? undefined
+            : Number(rawMinScore);
+        if (
+          rawMinScore !== undefined &&
+          (minScore === undefined || !Number.isFinite(minScore) || minScore < 0)
+        ) {
+          throw usageError("--min-score must be a number >= 0");
+        }
+        searchFilters(args);
+        // Transcript search already returns one chunk per session file.
+        const dedup = !transcriptSessions && !args.includes("--no-dedup");
+        const fetchK = dedup
+          ? Math.min(100, request.k * DEDUP_OVERFETCH)
+          : request.k;
         const roots = await dependencies.resolveRoots();
         client = clientFactory(roots);
         if (!transcriptSessions) {
           const result = await client.searchDocuments(
             request.query,
-            request.k,
+            fetchK,
             includeChats,
           );
           writeJson(
@@ -416,6 +565,7 @@ export async function runCli(
               result,
               metadataOnly ? "metadata" : fullContent ? "full" : "bounded",
               includeChats,
+              { k: request.k, dedup, minScore },
             ),
           );
           return;
@@ -425,6 +575,7 @@ export async function runCli(
           ...(metadataOnly
             ? metadataOnlySearchResult(result)
             : shapeSearchResult(result, fullContent)),
+          match: matchSignal(result.results, minScore),
           hint: searchHint(
             "transcript-sessions",
             result.query,
