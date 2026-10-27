@@ -3,6 +3,8 @@ import { expect, test } from "bun:test";
 import type { AgentKbClient } from "../src/client";
 import {
   DEFAULT_CONTENT_LIMIT,
+  DEFAULT_MIN_MEANING_SCORE,
+  dedupByFile,
   defaultCliDependencies,
   runCli,
   runMain,
@@ -12,6 +14,7 @@ import type {
   BuildResult,
   DocumentSearchResult,
   PrunePreviousResult,
+  SearchHit,
   SearchResult,
   StatusResponse,
   WarmResult,
@@ -233,7 +236,8 @@ test("default search is documents-only, two lists, hint last and runnable", asyn
   const output: string[] = [];
   const query = "what's Josh's retry plan";
   await runCli(["search", "--query", query], () => client, (line) => output.push(line));
-  expect(client.calls).toEqual([["searchDocuments", query, 10, false]]);
+  // Per-file de-dup over-fetches 3x k, then trims back to k.
+  expect(client.calls).toEqual([["searchDocuments", query, 30, false]]);
   expect(client.closed).toBeTrue();
   const parsed = JSON.parse(output[0]!);
   expect(Object.keys(parsed)).toEqual([
@@ -245,6 +249,7 @@ test("default search is documents-only, two lists, hint last and runnable", asyn
     "words_terms",
     "by_words",
     "by_meaning",
+    "match",
     "hint",
   ]);
   expect(parsed.searched).toEqual(["wiki", "wiki:source"]);
@@ -262,7 +267,7 @@ test("default search is documents-only, two lists, hint last and runnable", asyn
     () => chats,
     (line) => chatOutput.push(line),
   );
-  expect(chats.calls).toEqual([["searchDocuments", "x", 3, true]]);
+  expect(chats.calls).toEqual([["searchDocuments", "x", 9, true]]);
   const chatParsed = JSON.parse(chatOutput[0]!);
   expect(chatParsed.searched).toEqual(["wiki", "wiki:source", "chats"]);
   expect(chatParsed.hint).toContain("nightly index built 2026-07-25 12:34 UTC");
@@ -284,7 +289,7 @@ test("routes transcript session search only when explicitly enabled", async () =
     () => {},
   );
   expect(client.calls).toEqual([
-    ["search", "private knowledge", 4, true],
+    ["search", "private knowledge", 12, true],
   ]);
 });
 
@@ -387,7 +392,7 @@ test("--full-content preserves content and makes exactly one search call", async
     (line) => output.push(line),
   );
 
-  expect(client.calls).toEqual([["searchDocuments", "wide", 1, false]]);
+  expect(client.calls).toEqual([["searchDocuments", "wide", 3, false]]);
   expect(JSON.parse(output[0]!)).toMatchObject({
     by_words: [{ content, content_truncated: false }],
     by_meaning: [{ content, content_truncated: false }],
@@ -446,13 +451,15 @@ test("--metadata-only preserves the envelope, metadata, and backend order", asyn
     (line) => output.push(line),
   );
 
-  expect(client.calls).toEqual([["search", "identities", 2]]);
+  expect(client.calls).toEqual([["search", "identities", 6]]);
   const parsed = JSON.parse(output[0]!);
   expect(Object.keys(parsed).at(-1)).toBe("hint");
   expect(parsed.hint).toBe(
     "Searched chats only (nightly index built 2026-07-25 12:34 UTC). Documents: agentkb search --query 'identities' · today's chats by exact words: agent-history search 'identities'",
   );
   delete parsed.hint;
+  expect(parsed.match.no_good_match).toBeTrue();
+  delete parsed.match;
   expect(parsed).toEqual({
     schema: 1,
     generation_id: ID,
@@ -785,4 +792,176 @@ test("help wins anywhere and executable boundary classifies failures", async () 
       dependencies: defaultCliDependencies,
     }),
   ).toBe(1);
+});
+
+function hit(relativePath: string, score: number, line = 1): SearchHit {
+  return {
+    collection: "wiki",
+    file: relativePath,
+    path: relativePath,
+    filename: relativePath,
+    line,
+    score,
+    relative_path: relativePath,
+  };
+}
+
+function documentClient(byWords: SearchHit[], byMeaning: SearchHit[]): FakeClient {
+  const client = new FakeClient();
+  client.searchDocuments = async (query, k, includeChats) => {
+    client.calls.push(["searchDocuments", query, k, includeChats]);
+    return {
+      schema: 1,
+      generation_id: ID,
+      query,
+      k,
+      collections: ["wiki", "wiki:source"],
+      words_terms: [],
+      by_words: byWords,
+      by_meaning: byMeaning,
+    };
+  };
+  return client;
+}
+
+async function searchJson(client: FakeClient, extra: string[]) {
+  const output: string[] = [];
+  await runCli(
+    ["search", "--query", "q", ...extra],
+    () => client,
+    (line) => output.push(line),
+  );
+  return JSON.parse(output[0]!);
+}
+
+test("dedupByFile keeps the best-ranked hit per file, counts the rest, trims to k", () => {
+  const kept = dedupByFile(
+    [hit("a.md", 30, 1), hit("a.md", 29, 9), hit("b.md", 28), hit("a.md", 27, 20), hit("c.md", 26)],
+    2,
+  );
+  expect(kept.map((h) => [h.relative_path, h.line, h.more_in_file])).toEqual([
+    ["a.md", 1, 2],
+    ["b.md", 1, undefined],
+  ]);
+});
+
+test("search collapses repeated files in both lists by default; --no-dedup keeps them", async () => {
+  const words = [hit("a.md", 9, 1), hit("a.md", 8, 5), hit("a.md", 7, 9), hit("b.md", 6)];
+  const meaning = [hit("c.md", 25, 1), hit("c.md", 24, 3), hit("d.md", 23)];
+
+  const deduped = await searchJson(documentClient(words, meaning), ["--k", "2"]);
+  expect(deduped.k).toBe(2);
+  expect(deduped.by_words.map((h: SearchHit) => h.relative_path)).toEqual(["a.md", "b.md"]);
+  expect(deduped.by_words[0].more_in_file).toBe(2);
+  expect(deduped.by_meaning.map((h: SearchHit) => h.relative_path)).toEqual(["c.md", "d.md"]);
+
+  const client = documentClient(words, meaning);
+  const raw = await searchJson(client, ["--k", "2", "--no-dedup"]);
+  expect(client.calls).toEqual([["searchDocuments", "q", 2, false]]);
+  expect(raw.by_words.map((h: SearchHit) => h.relative_path)).toEqual(["a.md", "a.md"]);
+  expect(raw.by_words[0]).not.toHaveProperty("more_in_file");
+});
+
+test("over-fetch for de-dup is capped at the server's k limit", async () => {
+  const client = documentClient([], []);
+  await searchJson(client, ["--k", "50"]);
+  expect(client.calls).toEqual([["searchDocuments", "q", 100, false]]);
+});
+
+test("match.no_good_match flags a weak or empty by-meaning list", async () => {
+  const strong = await searchJson(
+    documentClient([], [hit("a.md", DEFAULT_MIN_MEANING_SCORE + 1)]),
+    [],
+  );
+  expect(strong.match).toEqual({
+    no_good_match: false,
+    top_meaning_score: DEFAULT_MIN_MEANING_SCORE + 1,
+    min_score: DEFAULT_MIN_MEANING_SCORE,
+  });
+
+  const weak = await searchJson(
+    documentClient([hit("a.md", 50)], [hit("b.md", DEFAULT_MIN_MEANING_SCORE - 1)]),
+    [],
+  );
+  // Words hits do not count: the any-term fill can match noise.
+  expect(weak.match.no_good_match).toBeTrue();
+
+  const empty = await searchJson(documentClient([], []), []);
+  expect(empty.match).toEqual({
+    no_good_match: true,
+    top_meaning_score: null,
+    min_score: DEFAULT_MIN_MEANING_SCORE,
+  });
+
+  const overridden = await searchJson(
+    documentClient([], [hit("b.md", 5)]),
+    ["--min-score", "4.5"],
+  );
+  expect(overridden.match).toEqual({
+    no_good_match: false,
+    top_meaning_score: 5,
+    min_score: 4.5,
+  });
+  expect(Object.keys(overridden).at(-1)).toBe("hint");
+});
+
+test("unsupported search filters fail clearly before any remote call", async () => {
+  for (const [flag, value] of [
+    ["--author", "josh"],
+    ["--since", "2026-01-01"],
+    ["--until", "2026-02-01"],
+    ["--tag", "retry"],
+    ["--type", "section"],
+    ["--collection", "wiki"],
+  ]) {
+    const client = new FakeClient();
+    const errors: string[] = [];
+    expect(
+      await runMain({
+        args: ["search", "--query", "x", flag!, value!],
+        stdout: () => {},
+        stderr: (line) => errors.push(line),
+        clientFactory: () => client,
+        dependencies: defaultCliDependencies,
+      }),
+    ).toBe(2);
+    expect(client.calls).toEqual([]);
+    expect(errors.join("")).toContain(
+      `search filter not supported by the AgentKB server yet: ${flag}`,
+    );
+  }
+});
+
+test("search filter and score flags are validated before the support check", async () => {
+  for (const [args, message] of [
+    [["--since", "2026-13-01"], "--since must be a date as YYYY-MM-DD"],
+    [["--until", "yesterday"], "--until must be a date as YYYY-MM-DD"],
+    [["--since", "2026-03-01", "--until", "2026-02-01"], "--since must not be after --until"],
+    [["--collection", "notes"], "--collection must be one of wiki, wiki:source, chats"],
+    [["--min-score", "high"], "--min-score must be a number"],
+  ] as const) {
+    const client = new FakeClient();
+    const errors: string[] = [];
+    expect(
+      await runMain({
+        args: ["search", "--query", "x", ...args],
+        stdout: () => {},
+        stderr: (line) => errors.push(line),
+        clientFactory: () => client,
+        dependencies: defaultCliDependencies,
+      }),
+    ).toBe(2);
+    expect(client.calls).toEqual([]);
+    expect(errors.join("")).toContain(message);
+  }
+});
+
+test("several unsupported filters are all named in one error", async () => {
+  expect(
+    runCli(
+      ["search", "--query", "x", "--tag", "a", "--author", "b"],
+      () => new FakeClient(),
+      () => {},
+    ),
+  ).rejects.toThrow("--author, --tag");
 });

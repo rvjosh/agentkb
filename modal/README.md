@@ -205,12 +205,30 @@ agentkb search --query "retry logic" --k 10 --include-chats
 ```
 
 The output is
-`{schema, generation_id, query, k, searched, words_terms, by_words, by_meaning, hint}`.
+`{schema, generation_id, query, k, searched, words_terms, by_words, by_meaning, match, hint}`.
 `searched` lists the collections both lists covered. `hint` is always the last
 key: one ready-to-run line naming what was not searched (chats, or chats newer
 than the nightly index build time) and the command that covers it, such as
 `agent-history search '<query>'`. Hints appear only in that field, never on
 stderr.
+
+Each list keeps only the best-ranked hit per file; that hit reports how many
+lower-ranked hits from the same file were collapsed as `more_in_file`. To fill
+`k` distinct files the CLI asks the server for 3×`k` (capped at 100) and trims.
+`--no-dedup` restores every hit and asks for exactly `k`.
+
+`match` is `{no_good_match, top_meaning_score, min_score}`. `no_good_match` is
+true when `by_meaning` is empty or its top score is below `min_score` (default
+18). By-meaning scores are GTE-ModernColBERT MaxSim sums, not 0–1 similarities,
+and the default is provisional until it is calibrated against real queries;
+`--min-score <n>` overrides it. `by_words` does not count toward `match`, since
+its any-term fill can match unrelated pages. In `--transcript-sessions` mode the
+same signal is computed from `results`.
+
+`--author`, `--since`, `--until` (YYYY-MM-DD), `--tag`, `--type` and
+`--collection` are parsed and validated, but the server search functions do not
+accept filters yet, so any of them fails with exit status 2 and names the
+unsupported flags. Nothing is filtered silently and nothing is searched.
 
 This uses the Modal function `search_documents_current(query, k, include_chats)`,
 which reads the existing generation; no rebuild is needed after deploying it.
