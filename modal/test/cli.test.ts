@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import type { AgentKbClient } from "../src/client";
 import {
   DEFAULT_CONTENT_LIMIT,
-  DEFAULT_MIN_MEANING_SCORE,
   dedupByFile,
   defaultCliDependencies,
   runCli,
@@ -250,6 +249,7 @@ test("default search is documents-only, two lists, hint last and runnable", asyn
     "by_words",
     "by_meaning",
     "match",
+    "notes",
     "hint",
   ]);
   expect(parsed.searched).toEqual(["wiki", "wiki:source"]);
@@ -289,7 +289,7 @@ test("routes transcript session search only when explicitly enabled", async () =
     () => {},
   );
   expect(client.calls).toEqual([
-    ["search", "private knowledge", 12, true],
+    ["search", "private knowledge", 4, true],
   ]);
 });
 
@@ -451,14 +451,18 @@ test("--metadata-only preserves the envelope, metadata, and backend order", asyn
     (line) => output.push(line),
   );
 
-  expect(client.calls).toEqual([["search", "identities", 6]]);
+  expect(client.calls).toEqual([["search", "identities", 2]]);
   const parsed = JSON.parse(output[0]!);
   expect(Object.keys(parsed).at(-1)).toBe("hint");
   expect(parsed.hint).toBe(
     "Searched chats only (nightly index built 2026-07-25 12:34 UTC). Documents: agentkb search --query 'identities' · today's chats by exact words: agent-history search 'identities'",
   );
   delete parsed.hint;
-  expect(parsed.match.no_good_match).toBeTrue();
+  expect(parsed.match).toEqual({
+    no_good_match: null,
+    top_meaning_score: 0.9,
+    min_score: null,
+  });
   delete parsed.match;
   expect(parsed).toEqual({
     schema: 1,
@@ -868,41 +872,94 @@ test("over-fetch for de-dup is capped at the server's k limit", async () => {
   expect(client.calls).toEqual([["searchDocuments", "q", 100, false]]);
 });
 
-test("match.no_good_match flags a weak or empty by-meaning list", async () => {
-  const strong = await searchJson(
-    documentClient([], [hit("a.md", DEFAULT_MIN_MEANING_SCORE + 1)]),
+test("match reports the top by-meaning score and applies no cutoff by default", async () => {
+  const plain = await searchJson(
+    documentClient([], [hit("a.md", 5.5), hit("b.md", 12.7)]),
     [],
+  );
+  expect(plain.match).toEqual({
+    no_good_match: null,
+    top_meaning_score: 12.7,
+    min_score: null,
+  });
+
+  const empty = await searchJson(documentClient([], []), []);
+  expect(empty.match).toEqual({
+    no_good_match: null,
+    top_meaning_score: null,
+    min_score: null,
+  });
+});
+
+test("--min-score sets match.no_good_match from the top by-meaning score", async () => {
+  const strong = await searchJson(
+    documentClient([], [hit("a.md", 13)]),
+    ["--min-score", "12.5"],
   );
   expect(strong.match).toEqual({
     no_good_match: false,
-    top_meaning_score: DEFAULT_MIN_MEANING_SCORE + 1,
-    min_score: DEFAULT_MIN_MEANING_SCORE,
+    top_meaning_score: 13,
+    min_score: 12.5,
   });
 
   const weak = await searchJson(
-    documentClient([hit("a.md", 50)], [hit("b.md", DEFAULT_MIN_MEANING_SCORE - 1)]),
-    [],
+    documentClient([hit("a.md", 50)], [hit("b.md", 12)]),
+    ["--min-score", "12.5"],
   );
   // Words hits do not count: the any-term fill can match noise.
   expect(weak.match.no_good_match).toBeTrue();
 
-  const empty = await searchJson(documentClient([], []), []);
+  const empty = await searchJson(documentClient([], []), ["--min-score", "0"]);
   expect(empty.match).toEqual({
     no_good_match: true,
     top_meaning_score: null,
-    min_score: DEFAULT_MIN_MEANING_SCORE,
+    min_score: 0,
   });
+  expect(Object.keys(empty).at(-1)).toBe("hint");
+});
 
-  const overridden = await searchJson(
-    documentClient([], [hit("b.md", 5)]),
-    ["--min-score", "4.5"],
-  );
-  expect(overridden.match).toEqual({
-    no_good_match: false,
-    top_meaning_score: 5,
-    min_score: 4.5,
-  });
-  expect(Object.keys(overridden).at(-1)).toBe("hint");
+test("--transcript-sessions is not de-duplicated or over-fetched", async () => {
+  const client = new FakeClient();
+  client.search = async (query: string, k: number, transcriptSessions?: boolean) => {
+    client.calls.push(["search", query, k, transcriptSessions]);
+    return {
+      schema: 1,
+      generation_id: ID,
+      query,
+      k,
+      results: [hit("s.md", 20, 1), hit("s.md", 19, 40), hit("t.md", 18)],
+    };
+  };
+  const parsed = await searchJson(client, ["--k", "3", "--transcript-sessions"]);
+  expect(client.calls).toEqual([["search", "q", 3, true]]);
+  expect(parsed.results.map((h: SearchHit) => [h.relative_path, h.line])).toEqual([
+    ["s.md", 1],
+    ["s.md", 40],
+    ["t.md", 1],
+  ]);
+  for (const result of parsed.results) {
+    expect(result).not.toHaveProperty("more_in_file");
+  }
+  expect(parsed.match.top_meaning_score).toBe(20);
+});
+
+test("notes say when a full fetch de-dups to fewer than k files", async () => {
+  // k=40 fetches 100 (the cap); 100 hits from 30 files gives 30 of 40.
+  const many = Array.from({ length: 100 }, (_, i) => hit(`f${i % 30}.md`, 100 - i));
+  const capped = await searchJson(documentClient(many, []), ["--k", "40"]);
+  expect(capped.by_words).toHaveLength(30);
+  expect(capped.notes).toEqual([
+    "by_words has 30 of 40 files after per-file de-dup of 100 fetched hits; more files may exist. Use a smaller --k or --no-dedup.",
+  ]);
+
+  // A short fetch means the server ran out of matches: no note.
+  const short = await searchJson(documentClient([hit("a.md", 1)], []), ["--k", "40"]);
+  expect(short.by_words).toHaveLength(1);
+  expect(short.notes).toEqual([]);
+
+  const raw = await searchJson(documentClient(many.slice(0, 40), []), ["--k", "40", "--no-dedup"]);
+  expect(raw.by_words).toHaveLength(40);
+  expect(raw.notes).toEqual([]);
 });
 
 test("unsupported search filters fail clearly before any remote call", async () => {
@@ -938,7 +995,9 @@ test("search filter and score flags are validated before the support check", asy
     [["--until", "yesterday"], "--until must be a date as YYYY-MM-DD"],
     [["--since", "2026-03-01", "--until", "2026-02-01"], "--since must not be after --until"],
     [["--collection", "notes"], "--collection must be one of wiki, wiki:source, chats"],
-    [["--min-score", "high"], "--min-score must be a number"],
+    [["--min-score", "high"], "--min-score must be a number >= 0"],
+    [["--min-score", ""], "--min-score must be a number >= 0"],
+    [["--min-score", "-1"], "--min-score must be a number >= 0"],
   ] as const) {
     const client = new FakeClient();
     const errors: string[] = [];

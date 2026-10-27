@@ -205,25 +205,36 @@ agentkb search --query "retry logic" --k 10 --include-chats
 ```
 
 The output is
-`{schema, generation_id, query, k, searched, words_terms, by_words, by_meaning, match, hint}`.
+`{schema, generation_id, query, k, searched, words_terms, by_words, by_meaning, match, notes, hint}`.
 `searched` lists the collections both lists covered. `hint` is always the last
 key: one ready-to-run line naming what was not searched (chats, or chats newer
 than the nightly index build time) and the command that covers it, such as
 `agent-history search '<query>'`. Hints appear only in that field, never on
 stderr.
 
-Each list keeps only the best-ranked hit per file; that hit reports how many
-lower-ranked hits from the same file were collapsed as `more_in_file`. To fill
-`k` distinct files the CLI asks the server for 3×`k` (capped at 100) and trims.
-`--no-dedup` restores every hit and asks for exactly `k`.
+**Behavior change: per-file de-dup is on by default.** Each list now returns up
+to `k` *files*, not `k` hits: only the best-ranked hit per file is kept. To
+fill `k` files the CLI asks the server for 3×`k` hits (capped at 100), so each
+search does up to three times the server work, and with `--metadata-only` the
+server still sends content for every fetched hit (the CLI drops it locally).
+`more_in_file` on a kept hit counts the other hits from that file *among the
+fetched hits*, not every match in the file. When a list was fetched in full
+and still has fewer than `k` files (likely with `--k` above 33, where the 100
+cap applies), `notes` says so; otherwise `notes` is empty. `--no-dedup`
+restores the previous behavior: exactly `k` hits, requested as `k`.
+`--transcript-sessions` is not de-duplicated or over-fetched, since the server
+already returns one chunk per session.
 
-`match` is `{no_good_match, top_meaning_score, min_score}`. `no_good_match` is
-true when `by_meaning` is empty or its top score is below `min_score` (default
-18). By-meaning scores are GTE-ModernColBERT MaxSim sums, not 0–1 similarities,
-and the default is provisional until it is calibrated against real queries;
-`--min-score <n>` overrides it. `by_words` does not count toward `match`, since
-its any-term fill can match unrelated pages. In `--transcript-sessions` mode the
-same signal is computed from `results`.
+`match` is `{no_good_match, top_meaning_score, min_score}`.
+`top_meaning_score` is the top `by_meaning` score (null when that list is
+empty). By-meaning scores are GTE-ModernColBERT MaxSim sums, not 0–1
+similarities. There is no default cutoff: on 40 real questions the top scores
+ran 5.5–18.9 and helpful and unhelpful results scored about the same, so
+`no_good_match` and `min_score` are null unless `--min-score <n>` (a number
+≥ 0) is passed. With it, `no_good_match` is true when `by_meaning` is empty or
+its top score is below `n`. `by_words` never counts, since its any-term fill
+can match unrelated pages. In `--transcript-sessions` mode `match` is computed
+from `results`.
 
 `--author`, `--since`, `--until` (YYYY-MM-DD), `--tag`, `--type` and
 `--collection` are parsed and validated, but the server search functions do not

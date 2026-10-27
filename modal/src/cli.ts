@@ -37,13 +37,6 @@ export const VERSION = "0.1.0";
 export const DEFAULT_CONTENT_LIMIT = 1_200;
 /** Per-file de-dup asks the server for this many times k (capped at 100). */
 export const DEDUP_OVERFETCH = 3;
-/**
- * Provisional "no good match" cutoff on the top by-meaning score. Meaning
- * scores are GTE-ModernColBERT MaxSim sums over the padded query tokens, so
- * they are not on a 0-1 scale; this value is uncalibrated and --min-score
- * overrides it.
- */
-export const DEFAULT_MIN_MEANING_SCORE = 18;
 /** Filters the server's search functions accept; none yet. */
 export const SERVER_SEARCH_FILTERS: ReadonlySet<SearchFilterName> = new Set();
 export type ClientFactory = (roots?: PathRoots) => AgentKbClient;
@@ -70,10 +63,14 @@ export type SearchFilterName =
 
 export type SearchFilters = Partial<Record<SearchFilterName, string>>;
 
+/**
+ * no_good_match is null unless --min-score is given: on 40 real questions no
+ * by-meaning cutoff separated helpful results from unhelpful ones.
+ */
 export interface MatchSignal {
-  no_good_match: boolean;
+  no_good_match: boolean | null;
   top_meaning_score: number | null;
-  min_score: number;
+  min_score: number | null;
 }
 
 export interface CliSearchResult extends Omit<SearchResult, "results"> {
@@ -96,6 +93,7 @@ export interface CliDocumentSearchResult {
   by_words: CliSearchHit[] | CliMetadataSearchHit[];
   by_meaning: CliSearchHit[] | CliMetadataSearchHit[];
   match: MatchSignal;
+  notes: string[];
   hint: string;
 }
 
@@ -145,8 +143,8 @@ export function usage(): string {
     "",
     "Search returns two separate lists over wiki pages and sources: by_words (exact words, keyword rank) and by_meaning (semantic rank). --include-chats adds agent chats to both lists.",
     "Search content is limited to 1,200 characters by default; --full-content widens it and --metadata-only omits it.",
-    "Search keeps the best hit per file in each list and counts the rest as more_in_file; --no-dedup keeps every hit.",
-    `Search sets match.no_good_match when the top by-meaning score is below ${DEFAULT_MIN_MEANING_SCORE} (provisional; --min-score overrides).`,
+    "Document search keeps the best hit per file in each list (k files, not k hits), fetching 3x k capped at 100; --no-dedup keeps every hit.",
+    "Search reports match.top_meaning_score; match.no_good_match is set only when --min-score <n> (n >= 0) is given.",
     "Search filters (--author, --since, --until, --tag, --type, --collection) fail until the server supports them; nothing is filtered silently.",
     "Generation deletion is dry-run by default and requires --force to mutate.",
     "Cost reports are hourly metered usage for app description \"agentkb\".",
@@ -276,15 +274,25 @@ export function shapeDocumentSearchResult(
   result: DocumentSearchResult,
   content: "bounded" | "full" | "metadata",
   includeChats: boolean,
-  options: { k?: number; dedup?: boolean; minScore?: number } = {},
+  options: { k?: number; dedup?: boolean; minScore?: number | undefined } = {},
 ): CliDocumentSearchResult {
   const k = options.k ?? result.k;
-  const shape = (hits: SearchHit[]) => {
+  const notes: string[] = [];
+  const shape = (name: "by_words" | "by_meaning", hits: SearchHit[]) => {
     const kept = options.dedup === false ? hits.slice(0, k) : dedupByFile(hits, k);
+    // A full fetch that still yields fewer than k files means more files may
+    // exist past the fetch limit; a short fetch just means no more matches.
+    if (options.dedup !== false && kept.length < k && hits.length >= result.k) {
+      notes.push(
+        `${name} has ${kept.length} of ${k} files after per-file de-dup of ${hits.length} fetched hits; more files may exist. Use a smaller --k or --no-dedup.`,
+      );
+    }
     return content === "metadata"
       ? kept.map(metadataOnlyHit)
       : kept.map((hit) => shapeHit(hit, content === "full"));
   };
+  const byWords = shape("by_words", result.by_words);
+  const byMeaning = shape("by_meaning", result.by_meaning);
   return {
     schema: result.schema,
     generation_id: result.generation_id,
@@ -292,12 +300,10 @@ export function shapeDocumentSearchResult(
     k,
     searched: result.collections,
     words_terms: result.words_terms,
-    by_words: shape(result.by_words),
-    by_meaning: shape(result.by_meaning),
-    match: matchSignal(
-      result.by_meaning,
-      options.minScore ?? DEFAULT_MIN_MEANING_SCORE,
-    ),
+    by_words: byWords,
+    by_meaning: byMeaning,
+    match: matchSignal(result.by_meaning, options.minScore),
+    notes,
     hint: searchHint(
       includeChats ? "include-chats" : "documents",
       result.query,
@@ -307,8 +313,9 @@ export function shapeDocumentSearchResult(
 }
 
 /**
- * Keep the first (best-ranked) hit per file, count the dropped ones on it as
- * more_in_file, and trim to k. Lists stay in server rank order.
+ * Keep the first (best-ranked) hit per file, count the dropped ones among
+ * these hits on it as more_in_file, and trim to k. Lists stay in server rank
+ * order.
  */
 export function dedupByFile<T extends SearchHit>(
   hits: T[],
@@ -328,15 +335,16 @@ export function dedupByFile<T extends SearchHit>(
 
 export function matchSignal(
   meaningHits: SearchHit[],
-  minScore: number,
+  minScore?: number,
 ): MatchSignal {
   const top = meaningHits.length
     ? Math.max(...meaningHits.map((hit) => hit.score))
     : null;
   return {
-    no_good_match: top === null || top < minScore,
+    no_good_match:
+      minScore === undefined ? null : top === null || top < minScore,
     top_meaning_score: top,
-    min_score: minScore,
+    min_score: minScore ?? null,
   };
 }
 
@@ -528,12 +536,18 @@ export async function runCli(
         );
         const rawMinScore = option(args, "--min-score");
         const minScore =
-          rawMinScore === undefined ? DEFAULT_MIN_MEANING_SCORE : Number(rawMinScore);
-        if (!Number.isFinite(minScore)) {
-          throw usageError("--min-score must be a number");
+          rawMinScore === undefined || !rawMinScore.trim()
+            ? undefined
+            : Number(rawMinScore);
+        if (
+          rawMinScore !== undefined &&
+          (minScore === undefined || !Number.isFinite(minScore) || minScore < 0)
+        ) {
+          throw usageError("--min-score must be a number >= 0");
         }
         searchFilters(args);
-        const dedup = !args.includes("--no-dedup");
+        // Transcript search already returns one chunk per session file.
+        const dedup = !transcriptSessions && !args.includes("--no-dedup");
         const fetchK = dedup
           ? Math.min(100, request.k * DEDUP_OVERFETCH)
           : request.k;
@@ -556,19 +570,12 @@ export async function runCli(
           );
           return;
         }
-        const fetched = await client.search(request.query, fetchK, true);
-        const result = {
-          ...fetched,
-          k: request.k,
-          results: dedup
-            ? dedupByFile(fetched.results, request.k)
-            : fetched.results.slice(0, request.k),
-        };
+        const result = await client.search(request.query, request.k, true);
         writeJson(output, {
           ...(metadataOnly
             ? metadataOnlySearchResult(result)
             : shapeSearchResult(result, fullContent)),
-          match: matchSignal(fetched.results, minScore),
+          match: matchSignal(result.results, minScore),
           hint: searchHint(
             "transcript-sessions",
             result.query,
