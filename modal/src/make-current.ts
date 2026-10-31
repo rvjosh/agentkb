@@ -41,14 +41,15 @@ export const BACKUP_FRESHNESS_MINUTES = 90;
 // The backup route that produces the immutable agent-history generation this
 // build consumes. `agent-history-sync` names the route after the account that
 // owns the mirror it writes, so the correct value depends on which host runs
-// make-current: Air keeps the default, mini-agent sets `history_sync_route` in
-// ~/.agentkb/config.json. Only these two backup routes may ever be named here —
+// make-current: Air keeps the default; mini-admin (and formerly mini-agent) sets
+// `history_sync_route` in ~/.agentkb/config.json. Only these backup routes may ever be named here —
 // every other route either collects transcripts or writes off-site snapshots,
 // and neither produces the mirror we read.
 export const DEFAULT_HISTORY_SYNC_ROUTE = "mini-admin-to-air-backup";
 export const HISTORY_SYNC_ROUTES = [
   "mini-admin-to-air-backup",
   "mini-admin-to-mini-agent-backup",
+  "mini-admin-to-mini-admin-backup",
 ] as const;
 export type HistorySyncRoute = (typeof HISTORY_SYNC_ROUTES)[number];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;

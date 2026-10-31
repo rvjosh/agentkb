@@ -38,22 +38,23 @@ make-current runs therefore depends on which host it runs on:
 | Host | `history_sync_route` | Notes |
 | --- | --- | --- |
 | Air | `mini-admin-to-air-backup` (code default) | Also feeds Air's independent Dropbox/restic off-site lane |
-| Mini-agent | `mini-admin-to-mini-agent-backup` | Set explicitly in `~/.agentkb/config.json` |
+| Mini-admin | `mini-admin-to-mini-admin-backup` | Set explicitly in `~/.agentkb/config.json`; the same route the off-site lane's hourly backup job runs, so the run reuses that mirror (the route's overlap lock serialises them) |
+| Mini-agent (retired 2026-10-31) | `mini-admin-to-mini-agent-backup` | Former owner |
 
 `mini-admin-to-air-backup` is only the *code* default: omit the key and
 make-current runs it for both its `run` and its `status` check. The live
-`agentkb-refresh` loop is owned by **Mini-agent**, not Air, so the production
-path is the explicit route below. (Ownership of record: `.loops/registry.json`
-and `note-automation-ownership-matrix.md` in the wiki.) On Mini-agent, set the
+`agentkb-refresh` loop is owned by **Mini-admin** (moved from Mini-agent on
+2026-10-31), so the production path is the explicit route below. (Ownership of record: `.loops/registry.json`
+and `note-automation-ownership-matrix.md` in the wiki.) On Mini-admin, set the
 route explicitly:
 
 ```json
 {
-  "history_sync_route": "mini-admin-to-mini-agent-backup"
+  "history_sync_route": "mini-admin-to-mini-admin-backup"
 }
 ```
 
-Only those two backup routes are accepted; any other value fails the run at
+Only those three backup routes are accepted; any other value fails the run at
 config resolution rather than reaching a subprocess. The mirror path itself is
 **not** host-specific — it is the same relative path under each account's own
 home, so erasure, AgentKB, and the off-site lane all reason about one mirror
