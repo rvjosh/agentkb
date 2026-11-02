@@ -27,39 +27,20 @@ held through the Python export and generation build so erasure cleanup cannot
 race the read. There is no `index.sqlite3.zst` fallback, and the job never fans
 out to live Air, Mini-admin, or Mini-agent transcript roots.
 
-### The source contract is host-aware
+### The source route
 
-`agent-history-sync` names its backup routes after the account that owns the
-mirror the route writes, and both routes pull the same Mini-admin aggregate with
-the same mechanics into the invoking account's own
-`~/Library/Application Support/agent-history-backup/mini-admin`. Which route
-make-current runs therefore depends on which host it runs on:
-
-| Host | `history_sync_route` | Notes |
-| --- | --- | --- |
-| Air | `mini-admin-to-air-backup` (code default) | Also feeds Air's independent Dropbox/restic off-site lane |
-| Mini-admin | `mini-admin-to-mini-admin-backup` | Set explicitly in `~/.agentkb/config.json`; the same route the off-site lane's hourly backup job runs, so the run reuses that mirror (the route's overlap lock serialises them) |
-| Mini-agent (retired 2026-10-31) | `mini-admin-to-mini-agent-backup` | Former owner |
-
-`mini-admin-to-air-backup` is only the *code* default: omit the key and
-make-current runs it for both its `run` and its `status` check. The live
-`agentkb-refresh` loop is owned by **Mini-admin** (moved from Mini-agent on
-2026-10-31), so the production path is the explicit route below. (Ownership of record: `.loops/registry.json`
-and `note-automation-ownership-matrix.md` in the wiki.) On Mini-admin, set the
-route explicitly:
-
-```json
-{
-  "history_sync_route": "mini-admin-to-mini-admin-backup"
-}
-```
-
-Only those three backup routes are accepted; any other value fails the run at
-config resolution rather than reaching a subprocess. The mirror path itself is
-**not** host-specific — it is the same relative path under each account's own
-home, so erasure, AgentKB, and the off-site lane all reason about one mirror
-layout. Do not schedule the two routes to overlap: they share one Mini-admin-side
-staging directory and there is no Mini-admin-side lock serialising them.
+make-current runs on **Mini-admin**, the only host left in the fleet (the Air
+left in October 2026; the Mini's agent account was removed by 2026-11-01). It
+reads the agent-history mirror written by `mini-admin-to-mini-admin-backup`
+into `~/Library/Application Support/agent-history-backup/mini-admin`. That is
+the code default and the only accepted `history_sync_route`; any other value,
+including the retired `mini-admin-to-air-backup` and
+`mini-admin-to-mini-agent-backup`, fails the run at config resolution rather
+than reaching a subprocess. It is the same route the off-site lane's hourly
+backup job runs, so the run reuses that mirror (the route's overlap lock
+serialises them). The live `agentkb-refresh` loop is owned by Mini-admin
+(ownership of record: `.loops/registry.json` and
+`note-automation-ownership-matrix.md` in the wiki).
 
 Source modes are `upstream`, `projection`, `human-dependent`, and
 `disabled-costly`. Readwise Tweets, GitHub Stars, and the seven git-backed
