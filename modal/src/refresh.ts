@@ -12,6 +12,8 @@ import {
   BUILD_PLAID_PERMUTATION_ALGORITHM,
   type BuildResult,
   type GenerationManifest,
+  OPTIONAL_CORPUS_COLLECTIONS,
+  REQUIRED_CORPUS_COLLECTIONS,
   SHA256_PATTERN,
   createGenerationId,
   generationPaths,
@@ -20,7 +22,10 @@ import {
 
 export const VOLUME_NAME = "agentkb-data";
 const MODAL_CLI_PREFIX = ["uvx", "--from", "modal==1.5.3", "modal"];
-const COLLECTIONS = new Set(["wiki", "wiki:source", "chats"]);
+const COLLECTIONS = new Set<string>([
+  ...REQUIRED_CORPUS_COLLECTIONS,
+  ...OPTIONAL_CORPUS_COLLECTIONS,
+]);
 
 export interface PathRoots {
   wikiRoot: string;
@@ -131,6 +136,13 @@ export async function resolvePathRoots(
     "littlebird-notes/": join(home, "home", "llm-wiki-projects", "littlebird-notes"),
     "eod-close/": join(home, "home", "llm-wiki-projects", "eod-close"),
     "tools-ts/": join(home, "home", "llm-wiki-projects", "tools-ts"),
+    // Opt-in "bookmarks" collection: one clipped page per Chrome bookmark.
+    "bookmarked-tab-bulk/": join(
+      home,
+      "home",
+      "llm-wiki-projects",
+      "bookmarked-tab-bulk",
+    ),
   };
   const externalRoots = Object.fromEntries(
     Object.entries(externalDefaults).map(([prefix, fallback]) => {
@@ -248,8 +260,10 @@ function validateExportManifest(
     throw new TypeError("export manifest source_file_counts must be an object");
   }
   const counts = sourceCounts as Record<string, unknown>;
+  const keys = Object.keys(counts);
   if (
-    Object.keys(counts).sort().join(",") !== "chats,wiki,wiki:source" ||
+    !REQUIRED_CORPUS_COLLECTIONS.every((collection) => keys.includes(collection)) ||
+    !keys.every((key) => COLLECTIONS.has(key)) ||
     Object.values(counts).some(
       (count) =>
         typeof count !== "number" || !Number.isInteger(count) || count < 0,
@@ -285,7 +299,8 @@ function validateExportManifest(
         "export manifest must include source receipts and collection counts",
       );
     }
-    for (const collection of ["wiki", "wiki:source", "chats"] as const) {
+    // Optional collections (bookmarks) may be empty; only required ones may not.
+    for (const collection of REQUIRED_CORPUS_COLLECTIONS) {
       if (manifest.collection_counts[collection].documents < 1) {
         throw new TypeError(`export collection ${collection} must be nonempty`);
       }

@@ -527,3 +527,27 @@ def test_central_transcript_identity_requires_exact_safe_path(
     collection, stored_file, expected
 ):
     assert runtime._central_transcript_identity(collection, stored_file) == expected
+
+
+def test_manifest_counts_accept_generations_with_and_without_bookmarks():
+    """The deployed runtime must load the live pre-bookmarks generation and new ones."""
+    def manifest(collections):
+        return {
+            "collection_counts": {
+                name: {"documents": 1, "files": 1} for name in collections
+            },
+            "source_file_counts": {name: 1 for name in collections},
+            "sources": {"schema": 1, "items": []},
+        }
+
+    old = ("wiki", "wiki:source", "chats")
+    runtime._validate_source_metadata(manifest(old), expected_count=3)
+    runtime._validate_source_metadata(manifest((*old, "bookmarks")), expected_count=4)
+    with pytest.raises(ValueError, match="collection_counts is invalid"):
+        runtime._validate_source_metadata(manifest(("wiki", "wiki:source")))
+    with pytest.raises(ValueError, match="collection_counts is invalid"):
+        runtime._validate_source_metadata(manifest((*old, "surprise")))
+    mismatched = manifest((*old, "bookmarks"))
+    del mismatched["source_file_counts"]["bookmarks"]
+    with pytest.raises(ValueError, match="source_file_counts is invalid"):
+        runtime._validate_source_metadata(mismatched)

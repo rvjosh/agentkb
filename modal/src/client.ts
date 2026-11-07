@@ -54,6 +54,7 @@ export interface AgentKbClient {
     query: string,
     k: number,
     includeChats: boolean,
+    includeBookmarks?: boolean,
   ): Promise<DocumentSearchResult>;
   build(generationId: string): Promise<BuildResult>;
   prunePrevious(
@@ -169,16 +170,23 @@ export class ModalAgentKbClient implements AgentKbClient {
     query: string,
     k: number,
     includeChats: boolean,
+    includeBookmarks = false,
   ): Promise<DocumentSearchResult> {
     const request = validateSearchRequest({ query, k });
     if (typeof includeChats !== "boolean") {
       throw new TypeError("includeChats must be a boolean");
     }
+    if (typeof includeBookmarks !== "boolean") {
+      throw new TypeError("includeBookmarks must be a boolean");
+    }
+    // The bookmarks argument is sent only when asked for, so a default search
+    // still works against a deployed app that predates it.
     const result = validateDocumentSearchResult(
       await this.#call("search_documents_current", [
         request.query,
         request.k,
         includeChats,
+        ...(includeBookmarks ? [true] : []),
       ]),
     );
     const roots = this.#roots;

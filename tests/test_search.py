@@ -30,6 +30,7 @@ from agentkb.search import (
     SearchResult,
     merge_multi_collection,
     search,
+    document_search_collections,
     search_split,
     search_transcript_sessions,
 )
@@ -855,5 +856,51 @@ def test_search_split_natural_question_gets_word_hits_and_scope_holds(tmp_path):
     )
     assert "chat.md" in {hit.relative_path for hit in with_chats.by_words}
     assert with_chats.by_meaning[0].relative_path == "chat.md"
+    store.close()
+
+
+def test_bookmarks_are_opt_in_for_every_search_path(tmp_path):
+    """Bookmarks must never surface unless the caller passes include_bookmarks."""
+    store = _FixedMeaningStore(tmp_path / "idx")
+    store.create()
+    page, chat, bookmark = store.add_documents([
+        {"collection": "wiki", "file": "retry.md",
+         "content": "Exponential backoff retry logic for flaky network calls"},
+        {"collection": "chats", "file": "chat.md",
+         "content": "we discussed retry logic for the network call"},
+        {"collection": "bookmarks", "file": "bookmarked-tab-bulk/pages/clip.md",
+         "content": "Clipped article about retry logic for network calls"},
+    ])
+    # PLAID with no subset ranks the bookmark first; scope must still hold.
+    store.meaning = [(bookmark, 9.0), (chat, 5.0), (page, 1.0)]
+    query = "retry network"
+
+    def files(split):
+        return {hit.relative_path for hit in split.by_words + split.by_meaning}
+
+    for include_chats in (False, True):
+        default = search_split(
+            store, None, query, top_k=10,
+            collections=document_search_collections(include_chats=include_chats),
+            semantic_subset_ids=None,
+        )
+        assert "bookmarked-tab-bulk/pages/clip.md" not in files(default)
+        assert "retry.md" in files(default)
+        opted_in = search_split(
+            store, None, query, top_k=10,
+            collections=document_search_collections(
+                include_chats=include_chats, include_bookmarks=True
+            ),
+            semantic_subset_ids=None,
+        )
+        assert {
+            hit.relative_path for hit in opted_in.by_words
+        } >= {"bookmarked-tab-bulk/pages/clip.md"}
+        assert opted_in.by_meaning[0].relative_path == "bookmarked-tab-bulk/pages/clip.md"
+
+    # The older fused search over the whole index ("all") stays bookmark-free too.
+    legacy = search(store, None, query, scope="all", top_k=10)
+    assert all(hit.collection != "bookmarks" for hit in legacy)
+    assert {hit.relative_path for hit in legacy} >= {"retry.md", "chat.md"}
     store.close()
 

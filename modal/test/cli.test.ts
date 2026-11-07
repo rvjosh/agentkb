@@ -165,16 +165,24 @@ class FakeClient implements AgentKbClient {
     query: string,
     k: number,
     includeChats: boolean,
+    includeBookmarks?: boolean,
   ): Promise<DocumentSearchResult> {
-    this.calls.push(["searchDocuments", query, k, includeChats]);
+    this.calls.push(
+      includeBookmarks === undefined
+        ? ["searchDocuments", query, k, includeChats]
+        : ["searchDocuments", query, k, includeChats, includeBookmarks],
+    );
     return {
       schema: 1,
       generation_id: ID,
       query,
       k,
-      collections: includeChats
-        ? ["wiki", "wiki:source", "chats"]
-        : ["wiki", "wiki:source"],
+      collections: [
+        "wiki",
+        "wiki:source",
+        ...(includeChats ? ["chats"] : []),
+        ...(includeBookmarks ? ["bookmarks"] : []),
+      ],
       words_terms: [],
       by_words: [],
       by_meaning: [],
@@ -272,6 +280,30 @@ test("default search is documents-only, two lists, hint last and runnable", asyn
   expect(chatParsed.searched).toEqual(["wiki", "wiki:source", "chats"]);
   expect(chatParsed.hint).toContain("nightly index built 2026-07-25 12:34 UTC");
   expect(Object.keys(chatParsed).at(-1)).toBe("hint");
+});
+
+test("bookmarks are searched only with --include-bookmarks", async () => {
+  const plain = new FakeClient();
+  const plainOutput: string[] = [];
+  await runCli(["search", "--query", "x", "--k", "3"], () => plain, (line) =>
+    plainOutput.push(line)
+  );
+  // A default search never asks the server for bookmarks, so an app deployed
+  // before the flag existed keeps answering it.
+  expect(plain.calls).toEqual([["searchDocuments", "x", 9, false]]);
+  expect(JSON.parse(plainOutput[0]!).hint).toContain("--include-bookmarks");
+
+  const both = new FakeClient();
+  const bothOutput: string[] = [];
+  await runCli(
+    ["search", "--query", "x", "--k", "3", "--include-chats", "--include-bookmarks"],
+    () => both,
+    (line) => bothOutput.push(line),
+  );
+  expect(both.calls).toEqual([["searchDocuments", "x", 9, true, true]]);
+  const parsed = JSON.parse(bothOutput[0]!);
+  expect(parsed.searched).toEqual(["wiki", "wiki:source", "chats", "bookmarks"]);
+  expect(parsed.hint).not.toContain("Not searched: bookmarks");
 });
 
 test("routes transcript session search only when explicitly enabled", async () => {

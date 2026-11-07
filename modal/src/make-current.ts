@@ -23,12 +23,13 @@ import {
   refreshProduction,
   resolvePathRoots,
 } from "./refresh";
-import type {
-  CorpusCollection,
-  GenerationManifest,
-  SourceMode,
-  SourceReceipt,
-  SourceState,
+import {
+  REQUIRED_CORPUS_COLLECTIONS,
+  type CorpusCollection,
+  type GenerationManifest,
+  type SourceMode,
+  type SourceReceipt,
+  type SourceState,
 } from "./protocol";
 
 export const RECEIPT_SCHEMA = 1;
@@ -68,10 +69,19 @@ const HISTORY_ARCHIVE_SCHEMAS: ReadonlySet<number> = new Set([5, 6, 7, 8, 9]);
 //
 // `include` limits a repo that is mostly code to the folders worth searching.
 // See `pathIsIncluded`. Without it the whole checkout's markdown publishes.
+//
+// `collection` defaults to `wiki:source`. A source in an opt-in collection
+// (`bookmarks`, searched only with --include-bookmarks) is `optional`: a
+// missing or empty checkout is skipped with a "stale" receipt and a warning
+// instead of failing the run, and the collapse guard never refuses a
+// generation over it.
+// A checkout that exists but is the wrong repo still fails the run.
 export interface GitBackedSource {
   sourceId: string;
   repo: string;
   include?: string[];
+  collection?: Extract<CorpusCollection, "wiki:source" | "bookmarks">;
+  optional?: boolean;
 }
 
 export const GIT_BACKED_SOURCES: readonly GitBackedSource[] = [
@@ -82,7 +92,22 @@ export const GIT_BACKED_SOURCES: readonly GitBackedSource[] = [
   { sourceId: "littlebird-notes", repo: "rvjosh/littlebird-notes" },
   { sourceId: "eod-close", repo: "rvjosh/eod-close", include: ["closes"] },
   { sourceId: "tools-ts", repo: "rvjosh/tools-ts", include: ["docs", "tools.md"] },
+  // One Defuddle clip per Chrome bookmark. Only `pages/` publishes: index.md
+  // is a link list and the JSON files are the clipper's own state.
+  {
+    sourceId: "bookmarked-tab-bulk",
+    repo: "rvjosh/bookmarked-tab-bulk",
+    include: ["pages"],
+    collection: "bookmarks",
+    optional: true,
+  },
 ];
+
+export const OPTIONAL_SOURCE_IDS: ReadonlySet<string> = new Set(
+  GIT_BACKED_SOURCES.filter((source) => source.optional).map(
+    (source) => source.sourceId,
+  ),
+);
 
 // Folders no source publishes, whatever its include list says. `git-history/`
 // is the per-day git log that `git-history-md` (tools-ts) writes into each
@@ -592,14 +617,14 @@ export async function resolveSourceRegistry(
           join(wikiRoot, "sources", "reddit-saved"),
         ],
       },
-      ...GIT_BACKED_SOURCES.map(({ sourceId, include }) => ({
+      ...GIT_BACKED_SOURCES.map(({ sourceId, include, collection, optional }) => ({
         sourceId,
         mode: "upstream" as const,
         root: notesRoots[sourceId]!,
-        required: true,
+        required: !optional,
         exportRoots: [{
           path: notesRoots[sourceId]!,
-          collection: "wiki:source" as const,
+          collection: collection ?? ("wiki:source" as const),
           prefix: `${sourceId}/`,
           kind: "markdown" as const,
           ...(include === undefined ? {} : { include }),
@@ -1094,7 +1119,9 @@ export function assertNoLargeCollapse(
   if (!manifest.collection_counts || !manifest.sources) {
     throw new TypeError("manifest lacks collection or source counts");
   }
-  for (const collection of ["wiki", "wiki:source", "chats"] as const) {
+  // Optional collections (bookmarks) may be empty or shrink without blocking
+  // the generation; only the required ones are guarded.
+  for (const collection of REQUIRED_CORPUS_COLLECTIONS) {
     if (manifest.collection_counts[collection].documents < 1) {
       throw new Error(`refusing zero collection: ${collection}`);
     }
@@ -1106,6 +1133,7 @@ export function assertNoLargeCollapse(
   for (const source of manifest.sources.items) {
     const old = previousSources.get(source.source_id);
     if (!old || old.source_file_count === 0) continue;
+    if (OPTIONAL_SOURCE_IDS.has(source.source_id)) continue;
     if (source.source_file_count === 0) {
       throw new Error(`previously nonempty source became zero: ${source.source_id}`);
     }
@@ -1117,7 +1145,7 @@ export function assertNoLargeCollapse(
     }
   }
   if (!previous.collection_counts) return;
-  for (const collection of ["wiki", "wiki:source", "chats"] as const) {
+  for (const collection of REQUIRED_CORPUS_COLLECTIONS) {
     const old = previous.collection_counts[collection].documents;
     const current = manifest.collection_counts[collection].documents;
     if (old > 0 && current < old * collapseRatio) {
@@ -1250,6 +1278,33 @@ export async function makeCurrent(
           cwd: registry.wikiCwd,
           timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
         });
+      } else if (
+        isGitBackedSource(entry.sourceId) &&
+        !entry.required &&
+        (await dependencies.scan([entry.root], {
+          include: (path) => includeInScan(entry, path),
+        })).count === 0
+      ) {
+        // Optional source with no checkout (or nothing to publish): skip it
+        // with a warning on its receipt instead of failing the run. It is
+        // "stale", not "fallback": the governed loop treats a degraded run as
+        // a failure and retries every few hours, so a host that simply lacks
+        // this clone would republish (billably) several times a day.
+        sourceReceipts.push({
+          ...receiptFor(
+            entry,
+            "stale",
+            `skip ${entry.root}`,
+            sourceStarted,
+            dependencies.now(),
+            { count: 0, newest: null },
+            `${entry.sourceId} checkout is missing or has no publishable ` +
+              `markdown at ${entry.root}; skipped, so its collection is empty`,
+          ),
+          export_roots: [],
+        });
+        checkDeadline();
+        continue;
       } else if (isGitBackedSource(entry.sourceId)) {
         const outcome = await refreshGitBackedSource(entry, dependencies);
         operation = outcome.operation;

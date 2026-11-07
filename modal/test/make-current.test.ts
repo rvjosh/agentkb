@@ -542,7 +542,7 @@ test("bounded subprocess terminates after its timeout", async () => {
 });
 
 
-test("registry publishes every git-backed repo, limiting only the code repos", async () => {
+test("registry publishes every git-backed repo, limiting only the code repos and bookmarks", async () => {
   const registry = await resolveSourceRegistry(undefined, {
     home: "/home/tester",
     readConfig: async () => "{}",
@@ -556,15 +556,20 @@ test("registry publishes every git-backed repo, limiting only the code repos", a
     const entry = registry.sources.find((s) => s.sourceId === sourceId);
     expect(entry).toBeDefined();
     expect(entry!.mode).toBe("upstream");
-    expect(entry!.required).toBe(true);
+    const bookmarks = sourceId === "bookmarked-tab-bulk";
+    expect(entry!.required).toBe(!bookmarks);
     expect(entry!.root).toBe(`/home/tester/home/llm-wiki-projects/${sourceId}`);
     const include = (
-      { "eod-close": ["closes"], "tools-ts": ["docs", "tools.md"] } as Record<string, string[]>
+      {
+        "eod-close": ["closes"],
+        "tools-ts": ["docs", "tools.md"],
+        "bookmarked-tab-bulk": ["pages"],
+      } as Record<string, string[]>
     )[sourceId];
     expect(entry!.exportRoots).toEqual([
       {
         path: `/home/tester/home/llm-wiki-projects/${sourceId}`,
-        collection: "wiki:source",
+        collection: bookmarks ? "bookmarks" : "wiki:source",
         prefix: `${sourceId}/`,
         kind: "markdown",
         ...(include === undefined ? {} : { include }),
@@ -693,6 +698,81 @@ test("empty notes checkout fails the run", async () => {
   expect(result.receipt.error).toContain("durable projection is empty");
 });
 
+
+const BOOKMARKS_ROOT = "/home/tester/home/llm-wiki-projects/bookmarked-tab-bulk";
+
+test("a missing bookmarks checkout publishes healthy, exporting nothing from it", async () => {
+  // The Mini has no clone yet: the run must still publish everything else, and
+  // stay healthy, because the governed loop retries (and republishes) any
+  // degraded run every few hours.
+  const state = dependencies({ missingPaths: [BOOKMARKS_ROOT] });
+  let plan: SourcePlan | null = null;
+  const refresh = state.deps.refresh;
+  state.deps.refresh = async (c, options, d) => {
+    plan = options.sourcePlan;
+    return refresh(c, options, d);
+  };
+  const result = await makeCurrent(client, undefined, state.deps);
+  expect(result.exitCode).toBe(0);
+  expect(result.receipt.published).toBe(true);
+  expect(result.receipt.health).toBe("healthy");
+  expect(result.receipt.warning).toBeNull();
+  const receipt = result.receipt.sources.find(
+    (s) => s.source_id === "bookmarked-tab-bulk",
+  );
+  expect(receipt!.state).toBe("stale");
+  expect(receipt!.error).toBeNull();
+  expect(receipt!.warning).toContain("missing or has no publishable markdown");
+  // The exporter must not be pointed at a directory that is not there.
+  const planned = plan!.sources.find((s) => s.source_id === "bookmarked-tab-bulk");
+  expect(planned!.export_roots).toEqual([]);
+  expect(state.commands.some((args) => args.includes(BOOKMARKS_ROOT))).toBe(false);
+});
+
+test("collapse guard never refuses a generation over the bookmarks collection", () => {
+  const sourcePlan = {
+    schema: 1 as const,
+    include_local_chats: false as const,
+    sources: [],
+  };
+  const current = manifest(sourcePlan);
+  current.collection_counts!.bookmarks = { documents: 0, files: 0 };
+  // First run with the new source at zero.
+  expect(() => assertNoLargeCollapse(current, null, 0.5)).not.toThrow();
+  current.sources!.items = [{
+    source_id: "bookmarked-tab-bulk",
+    mode: "upstream",
+    state: "fallback",
+    operation: "skip",
+    started_at: "x",
+    finished_at: "x",
+    duration_ms: 0,
+    root: BOOKMARKS_ROOT,
+    source_file_count: 0,
+    exported_document_count: 0,
+    newest_source_timestamp: null,
+    freshness_threshold_minutes: null,
+    age_minutes: null,
+    warning: "skipped",
+    error: null,
+  }];
+  // A run after the checkout vanished: source and collection both drop to zero.
+  const previous = {
+    sources: [{ source_id: "bookmarked-tab-bulk", source_file_count: 1400 }],
+    collection_counts: {
+      wiki: { documents: 10, files: 1 },
+      "wiki:source": { documents: 10, files: 1 },
+      chats: { documents: 10, files: 1 },
+      bookmarks: { documents: 9000, files: 1400 },
+    },
+  } as MakeCurrentReceipt;
+  expect(() => assertNoLargeCollapse(current, previous, 0.5)).not.toThrow();
+  // Required collections are still guarded in the same run.
+  current.collection_counts!.chats.documents = 0;
+  expect(() => assertNoLargeCollapse(current, previous, 0.5)).toThrow(
+    /zero collection: chats/,
+  );
+});
 
 test("dirty notes checkout skips the pull and publishes as fallback", async () => {
   const state = dependencies({ notesDirty: true });

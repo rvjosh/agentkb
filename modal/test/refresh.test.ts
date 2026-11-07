@@ -280,6 +280,8 @@ test("path roots use override, config, and portable fallbacks", async () => {
       "littlebird-notes/": "/home/tester/home/llm-wiki-projects/littlebird-notes",
       "eod-close/": "/home/tester/home/llm-wiki-projects/eod-close",
       "tools-ts/": "/home/tester/home/llm-wiki-projects/tools-ts",
+      "bookmarked-tab-bulk/":
+        "/home/tester/home/llm-wiki-projects/bookmarked-tab-bulk",
     },
   });
   const fallback = await resolvePathRoots(
@@ -308,6 +310,8 @@ test("path roots use override, config, and portable fallbacks", async () => {
       "littlebird-notes/": "/home/tester/home/llm-wiki-projects/littlebird-notes",
       "eod-close/": "/home/tester/home/llm-wiki-projects/eod-close",
       "tools-ts/": "/home/tester/home/llm-wiki-projects/tools-ts",
+      "bookmarked-tab-bulk/":
+        "/home/tester/home/llm-wiki-projects/bookmarked-tab-bulk",
     },
   });
 });

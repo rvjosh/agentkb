@@ -27,8 +27,8 @@ from agentkb.modal_backend.generations import (
     validate_session_key,
 )
 from agentkb.search import (
-    DOCUMENT_AND_CHAT_COLLECTIONS,
     DOCUMENT_COLLECTIONS,
+    document_search_collections,
     search,
     search_split,
     search_transcript_sessions,
@@ -42,7 +42,11 @@ DOCUMENT_BATCH_SIZE = 256
 PLAID_KMEANS_SAMPLE_SIZE = 16_384
 PLAID_CREATE_COUNT = 1
 PLAID_PERMUTATION_ALGORITHM = "sha256-key-sort-v1"
-CORPUS_COLLECTIONS = {"wiki", "wiki:source", "chats"}
+# Every generation carries the required collections. Optional ones were added
+# later (bookmarks), so generations exported before them simply lack the key.
+REQUIRED_CORPUS_COLLECTIONS = frozenset({"wiki", "wiki:source", "chats"})
+OPTIONAL_CORPUS_COLLECTIONS = frozenset({"bookmarks"})
+CORPUS_COLLECTIONS = REQUIRED_CORPUS_COLLECTIONS | OPTIONAL_CORPUS_COLLECTIONS
 SOURCE_MODES = {"upstream", "projection", "human-dependent", "disabled-costly"}
 SOURCE_STATES = {"fresh", "fallback", "stale", "failed"}
 
@@ -70,6 +74,10 @@ def _central_transcript_identity(
     return exact_source, exact_session_id
 
 
+def _valid_collection_keys(keys: Any) -> bool:
+    return REQUIRED_CORPUS_COLLECTIONS <= set(keys) <= CORPUS_COLLECTIONS
+
+
 def _validate_source_metadata(
     manifest: dict[str, Any], expected_count: int | None = None
 ) -> None:
@@ -77,7 +85,9 @@ def _validate_source_metadata(
     sources = manifest.get("sources")
     if collection_counts is None and sources is None:
         return
-    if not isinstance(collection_counts, dict) or set(collection_counts) != CORPUS_COLLECTIONS:
+    if not isinstance(collection_counts, dict) or not _valid_collection_keys(
+        collection_counts
+    ):
         raise ValueError("manifest collection_counts is invalid")
     for collection, counts in collection_counts.items():
         if not isinstance(counts, dict) or set(counts) != {"documents", "files"}:
@@ -93,9 +103,11 @@ def _validate_source_metadata(
     ) != expected_count:
         raise ValueError("manifest collection document counts do not match corpus_count")
     source_file_counts = manifest.get("source_file_counts")
-    if not isinstance(source_file_counts, dict) or set(source_file_counts) != CORPUS_COLLECTIONS:
+    if not isinstance(source_file_counts, dict) or set(source_file_counts) != set(
+        collection_counts
+    ):
         raise ValueError("manifest source_file_counts is invalid")
-    for collection in CORPUS_COLLECTIONS:
+    for collection in collection_counts:
         if source_file_counts[collection] != collection_counts[collection]["files"]:
             raise ValueError(
                 f"manifest file counts do not match for collection {collection}"
@@ -915,10 +927,14 @@ class SearchRuntime:
             self.store.validate_for_search()
             self.store._load_plaid_index()
             identity_catalog = self.store.get_document_catalog(collection="chats")
+            self.collection_doc_ids = {
+                collection: tuple(self.store.get_document_ids(collection=collection))
+                for collection in sorted(CORPUS_COLLECTIONS)
+            }
             self.document_doc_ids = tuple(
                 doc_id
                 for collection in DOCUMENT_COLLECTIONS
-                for doc_id in self.store.get_document_ids(collection=collection)
+                for doc_id in self.collection_doc_ids[collection]
             )
         except BaseException:
             self.store.close()
@@ -987,18 +1003,42 @@ class SearchRuntime:
             "results": [_wire_search_result(result) for result in results],
         }
 
+    def _semantic_subset(self, collections: tuple[str, ...]) -> tuple[int, ...] | None:
+        """PLAID subset for ``collections``; None when they already cover the index."""
+        if all(
+            not doc_ids or collection in collections
+            for collection, doc_ids in self.collection_doc_ids.items()
+        ):
+            return None
+        if collections == DOCUMENT_COLLECTIONS:
+            return self.document_doc_ids
+        return tuple(
+            doc_id
+            for collection in collections
+            for doc_id in self.collection_doc_ids.get(collection, ())
+        )
+
     def search_documents(
-        self, query: str, k: int, include_chats: bool = False
+        self,
+        query: str,
+        k: int,
+        include_chats: bool = False,
+        include_bookmarks: bool = False,
     ) -> dict[str, Any]:
-        """Two separate rankings (words, meaning) over documents, chats opt-in."""
+        """Two separate rankings (words, meaning) over documents.
+
+        Chats and bookmarks are opt-in: a default search never returns them.
+        """
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be a non-empty string")
         if not isinstance(k, int) or isinstance(k, bool) or not 1 <= k <= 100:
             raise ValueError("k must be an integer between 1 and 100")
         if not isinstance(include_chats, bool):
             raise ValueError("include_chats must be a boolean")
-        collections = (
-            DOCUMENT_AND_CHAT_COLLECTIONS if include_chats else DOCUMENT_COLLECTIONS
+        if not isinstance(include_bookmarks, bool):
+            raise ValueError("include_bookmarks must be a boolean")
+        collections = document_search_collections(
+            include_chats=include_chats, include_bookmarks=include_bookmarks
         )
         split = search_split(
             self.store,
@@ -1006,7 +1046,7 @@ class SearchRuntime:
             query,
             top_k=k,
             collections=collections,
-            semantic_subset_ids=None if include_chats else self.document_doc_ids,
+            semantic_subset_ids=self._semantic_subset(collections),
         )
         return {
             "schema": 1,

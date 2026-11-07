@@ -80,8 +80,14 @@ def test_export_is_canonical_model_free_and_has_exact_default_collections(
         "model": DEFAULT_MODEL,
         "corpus_count": 3,
         "corpus_hash": hashlib.sha256(corpus_bytes).hexdigest(),
-        "source_file_counts": {"chats": 1, "wiki": 1, "wiki:source": 1},
+        "source_file_counts": {
+            "bookmarks": 0,
+            "chats": 1,
+            "wiki": 1,
+            "wiki:source": 1,
+        },
         "collection_counts": {
+            "bookmarks": {"documents": 0, "files": 0},
             "chats": {"documents": 1, "files": 1},
             "wiki": {"documents": 1, "files": 1},
             "wiki:source": {"documents": 1, "files": 1},

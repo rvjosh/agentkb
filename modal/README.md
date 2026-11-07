@@ -43,7 +43,7 @@ serialises them). The live `agentkb-refresh` loop is owned by Mini-admin
 `note-automation-ownership-matrix.md` in the wiki).
 
 Source modes are `upstream`, `projection`, `human-dependent`, and
-`disabled-costly`. Readwise Tweets, GitHub Stars, and the seven git-backed
+`disabled-costly`. Readwise Tweets, GitHub Stars, and the eight git-backed
 repos are the wiki upstream refreshes in the daily path. YouTube, historical chat exports, and Reddit are
 validated as durable projections; the job never runs browser-cookie, OAuth,
 X, or Gemini work. A failed safe upstream may publish only when its existing
@@ -99,9 +99,38 @@ Refresh is deliberately conservative, in this order:
 
 An empty checkout still fails the run, as for any required source.
 
-**Host requirement:** the machine running `make-current` needs both checkouts
-present and a credential that can reach `github.com:rvjosh/*`. Without network
-the run still publishes, degraded, from the local checkouts.
+### Bookmarks: an opt-in collection
+
+`bookmarked-tab-bulk` (`rvjosh/bookmarked-tab-bulk`, one Defuddle clip per
+Chrome bookmark) is the one git-backed source that does **not** publish into
+`wiki:source`. Its `pages/` folder publishes into a separate `bookmarks`
+collection under the `bookmarked-tab-bulk/` prefix; `index.md`, `README.md`,
+and the JSON files are left out. Default search never returns bookmarks; a
+caller opts in with `--include-bookmarks`, exactly as chats need
+`--include-chats`.
+
+The source is optional, unlike every other one:
+
+- A missing checkout, or one with no markdown under `pages/`, is skipped. Its
+  receipt is `stale` with a warning naming the path, the exporter is given no
+  root for it, and the run stays healthy. It is deliberately not `fallback`:
+  the governed `agentkb-refresh` loop treats a degraded run as a failure and
+  retries every few hours, which would republish several times a day on any
+  host without the clone.
+- A checkout that exists but is not the repository root, or whose origin is not
+  `rvjosh/bookmarked-tab-bulk`, still fails the run like any other source.
+- The `bookmarks` collection may be empty, and the collapse guard never refuses
+  a generation over it or over this source shrinking. Only `wiki`,
+  `wiki:source`, and `chats` must be nonempty and are collapse-guarded.
+
+Generations exported before this change have no `bookmarks` key in
+`collection_counts`/`source_file_counts`; the runtime and launcher accept both
+shapes, so the search app can be deployed before the next publication.
+
+**Host requirement:** the machine running `make-current` needs every required
+checkout present (bookmarks only if they should be searchable) and a credential
+that can reach `github.com:rvjosh/*`. Without network the run still publishes,
+degraded, from the local checkouts.
 
 `~/.agentkb/config.json` keys read by make-current: `wiki_cwd`,
 `source_paths.<source-id>`, `make_current.collapse_ratio`,
@@ -180,11 +209,17 @@ and returns two separate ranked lists instead of one blended list:
 
 A 2026-07-27 benchmark found that blending the two (RRF) did not help
 paraphrase recall, and chats (about 116k of 200k chunks) crowded wiki pages
-out of blended results. Widen both lists to chats with `--include-chats`:
+out of blended results. Widen both lists to chats with `--include-chats`, and
+to clipped Chrome bookmarks with `--include-bookmarks` (the two combine):
 
 ```bash
 agentkb search --query "retry logic" --k 10 --include-chats
+agentkb search --query "retry logic" --k 10 --include-bookmarks
 ```
+
+`--include-bookmarks` passes a fourth argument to `search_documents_current`,
+so it needs the deployed app to include the bookmarks change; a search without
+it sends the same three arguments as before and works against either app.
 
 The output is
 `{schema, generation_id, query, k, searched, words_terms, by_words, by_meaning, match, notes, hint}`.
@@ -255,7 +290,7 @@ agentkb search --query "retry logic" --k 10 \
 
 This mode is opt-in, calls `search_current`, and keeps its single `results`
 list, plus the trailing `hint` key. It cannot be combined with
-`--include-chats`. After deploying search-code changes, canary both paths
+`--include-chats` or `--include-bookmarks`. After deploying search-code changes, canary both paths
 without rebuilding the immutable generation:
 
 ```bash

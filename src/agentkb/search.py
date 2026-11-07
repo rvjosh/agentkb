@@ -260,6 +260,9 @@ def search(
         doc = store.get_document_by_id(doc_id)
         if not doc:
             continue
+        # "all" searches the whole PLAID index; bookmarks stay opt-in anyway.
+        if doc.collection == "bookmarks" and "bookmarks" not in collections:
+            continue
 
         # --- Post-filters ---
         # Glob include/exclude on file path
@@ -372,6 +375,21 @@ def search_transcript_sessions(
 
 DOCUMENT_COLLECTIONS = ("wiki", "wiki:source")
 DOCUMENT_AND_CHAT_COLLECTIONS = ("wiki", "wiki:source", "chats")
+# Opt-in collections, searched only when the caller asks: chats
+# (--include-chats) and bookmarks (--include-bookmarks, one clipped page per
+# Chrome bookmark). Order here is the order reported back to the caller.
+OPT_IN_COLLECTIONS = ("chats", "bookmarks")
+
+
+def document_search_collections(
+    *, include_chats: bool = False, include_bookmarks: bool = False
+) -> tuple[str, ...]:
+    """The collections a document search covers: wiki pages and sources, plus opt-ins."""
+    return (
+        *DOCUMENT_COLLECTIONS,
+        *(("chats",) if include_chats else ()),
+        *(("bookmarks",) if include_bookmarks else ()),
+    )
 
 # FTS5 trigram matches nothing for terms under three characters, and every
 # term must match, so short words and filler would sink a natural question.

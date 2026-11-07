@@ -20,15 +20,23 @@ export interface GenerationManifest {
   model: string;
   corpus_count: number;
   corpus_hash: string;
-  source_file_counts?: Record<CorpusCollection, number>;
-  collection_counts?: Record<CorpusCollection, CollectionCount>;
+  source_file_counts?: CollectionRecord<number>;
+  collection_counts?: CollectionRecord<CollectionCount>;
   sources?: SourcesManifest;
   exported_at?: string;
   build?: BuildMetrics;
   validation?: IndexValidation;
 }
 
-export type CorpusCollection = "wiki" | "wiki:source" | "chats";
+// Every generation has the required collections. Optional ones were added
+// later, so a generation exported before them lacks the key entirely.
+export const REQUIRED_CORPUS_COLLECTIONS = ["wiki", "wiki:source", "chats"] as const;
+export const OPTIONAL_CORPUS_COLLECTIONS = ["bookmarks"] as const;
+export type RequiredCorpusCollection = (typeof REQUIRED_CORPUS_COLLECTIONS)[number];
+export type OptionalCorpusCollection = (typeof OPTIONAL_CORPUS_COLLECTIONS)[number];
+export type CorpusCollection = RequiredCorpusCollection | OptionalCorpusCollection;
+export type CollectionRecord<T> = Record<RequiredCorpusCollection, T> &
+  Partial<Record<OptionalCorpusCollection, T>>;
 
 export interface CollectionCount {
   documents: number;
@@ -150,11 +158,23 @@ export interface SearchResult {
 }
 
 export const DOCUMENT_COLLECTIONS = ["wiki", "wiki:source"] as const;
-export const DOCUMENT_AND_CHAT_COLLECTIONS = [
-  "wiki",
-  "wiki:source",
-  "chats",
-] as const;
+/** Collections a document search covers: wiki pages and sources, plus opt-ins. */
+export function documentSearchCollections(options: {
+  includeChats?: boolean;
+  includeBookmarks?: boolean;
+}): string[] {
+  return [
+    ...DOCUMENT_COLLECTIONS,
+    ...(options.includeChats ? ["chats"] : []),
+    ...(options.includeBookmarks ? ["bookmarks"] : []),
+  ];
+}
+
+const ALLOWED_DOCUMENT_SEARCH_COLLECTIONS = [false, true].flatMap((includeChats) =>
+  [false, true].map((includeBookmarks) =>
+    documentSearchCollections({ includeChats, includeBookmarks })
+  )
+);
 
 /** Two independent rankings of one query: by words (FTS5) and by meaning (PLAID). */
 export interface DocumentSearchResult {
@@ -671,11 +691,24 @@ export function validateManifest(
       ),
       chats: integerAt(sourceCounts.chats, `${path}.source_file_counts.chats`),
     };
+    for (const collection of OPTIONAL_CORPUS_COLLECTIONS) {
+      if (sourceCounts[collection] !== undefined) {
+        result.source_file_counts[collection] = integerAt(
+          sourceCounts[collection],
+          `${path}.source_file_counts.${collection}`,
+        );
+      }
+    }
   }
   if (record.collection_counts !== undefined) {
     const counts = objectAt(record.collection_counts, `${path}.collection_counts`);
     result.collection_counts = Object.fromEntries(
-      (["wiki", "wiki:source", "chats"] as CorpusCollection[]).map(
+      [
+        ...REQUIRED_CORPUS_COLLECTIONS,
+        ...OPTIONAL_CORPUS_COLLECTIONS.filter(
+          (collection) => counts[collection] !== undefined,
+        ),
+      ].map(
         (collection) => {
           const count = objectAt(
             counts[collection],
@@ -696,7 +729,7 @@ export function validateManifest(
           ];
         },
       ),
-    ) as Record<CorpusCollection, CollectionCount>;
+    ) as CollectionRecord<CollectionCount>;
   }
   if (record.sources !== undefined) {
     result.sources = validateSourcesManifest(record.sources, `${path}.sources`);
@@ -860,7 +893,7 @@ export function validateDocumentSearchResult(
   const collections = record.collections.map((collection, index) =>
     stringAt(collection, `document search.collections[${index}]`)
   );
-  const allowed = [DOCUMENT_COLLECTIONS, DOCUMENT_AND_CHAT_COLLECTIONS].find(
+  const allowed = ALLOWED_DOCUMENT_SEARCH_COLLECTIONS.find(
     (expected) =>
       expected.length === collections.length &&
       expected.every((collection, index) => collections[index] === collection),
@@ -868,7 +901,7 @@ export function validateDocumentSearchResult(
   if (!allowed) {
     fail(
       "document search.collections",
-      "must be [wiki, wiki:source] or [wiki, wiki:source, chats]",
+      "must be [wiki, wiki:source] plus optionally chats, then bookmarks",
     );
   }
   if (!Array.isArray(record.words_terms)) {

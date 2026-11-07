@@ -38,7 +38,9 @@ SCHEMA = 1
 SOURCES_SCHEMA = 1
 CORPUS_FILENAME = "corpus.jsonl"
 MANIFEST_FILENAME = "manifest.json"
-COLLECTIONS = ("chats", "wiki", "wiki:source")
+# "bookmarks" is opt-in at search time (--include-bookmarks) and may be empty:
+# it is filled only by the bookmarked-tab-bulk source when that checkout exists.
+COLLECTIONS = ("bookmarks", "chats", "wiki", "wiki:source")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHIVE_POINTER_SCHEMA = 1
 HISTORY_ARCHIVE_SCHEMAS = {5, 6, 7, 8, 9}
@@ -732,7 +734,7 @@ def export_corpus(
     source_plan: dict[str, Any] | None = None,
     archive_lock_held: bool = False,
 ) -> dict[str, Any]:
-    """Export the default wiki, wiki:source, and chats corpus."""
+    """Export the default wiki, wiki:source, chats, and bookmarks corpus."""
     generation_id = validate_generation_id(generation_id)
     output_dir = validate_output_directory(output_dir)
     validated_plan = (

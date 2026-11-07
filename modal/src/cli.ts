@@ -130,8 +130,8 @@ export function usage(): string {
     "  agentkb delete-generation --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb delete-staged --generation-id <id> --expected-current <id> --actor <actor> --reason <reason> [--exact-session-key <source/id>] [--force] [--json]",
     "  agentkb warm",
-    "  agentkb search --query <text> [--k <1-100>] [--include-chats | --transcript-sessions] [--full-content | --metadata-only] [--no-dedup] [--min-score <n>]",
-    "                 [--author <name>] [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--tag <tag>] [--type <unit-type>] [--collection <wiki|wiki:source|chats>]",
+    "  agentkb search --query <text> [--k <1-100>] [--include-chats] [--include-bookmarks] [--transcript-sessions] [--full-content | --metadata-only] [--no-dedup] [--min-score <n>]",
+    "                 [--author <name>] [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--tag <tag>] [--type <unit-type>] [--collection <wiki|wiki:source|chats|bookmarks>]",
     "  agentkb refresh [--wiki-path <path>]",
     "  agentkb make-current [--wiki-path <path>] [--json]",
     "  agentkb build --generation-id <id>",
@@ -141,7 +141,7 @@ export function usage(): string {
     "  agentkb -h | --help",
     "  agentkb --version",
     "",
-    "Search returns two separate lists over wiki pages and sources: by_words (exact words, keyword rank) and by_meaning (semantic rank). --include-chats adds agent chats to both lists.",
+    "Search returns two separate lists over wiki pages and sources: by_words (exact words, keyword rank) and by_meaning (semantic rank). --include-chats adds agent chats to both lists; --include-bookmarks adds clipped Chrome bookmarks. Neither is searched by default, and neither combines with --transcript-sessions.",
     "Search content is limited to 1,200 characters by default; --full-content widens it and --metadata-only omits it.",
     "Document search keeps the best hit per file in each list (k files, not k hits), fetching 3x k capped at 100; --no-dedup keeps every hit.",
     "Search reports match.top_meaning_score; match.no_good_match is set only when --min-score <n> (n >= 0) is given.",
@@ -257,14 +257,18 @@ export function searchHint(
   mode: "documents" | "include-chats" | "transcript-sessions",
   query: string,
   generationId: string,
+  includeBookmarks = false,
 ): string {
   const q = shellQuote(query);
   const built = indexBuildTime(generationId);
+  const bookmarks = includeBookmarks
+    ? ""
+    : ` · Not searched: bookmarks (clipped Chrome bookmarks). Include them: agentkb search --query ${q} --include-bookmarks`;
   switch (mode) {
     case "documents":
-      return `Not searched: chats (agent sessions). Include them: agentkb search --query ${q} --include-chats · today's chats by exact words: agent-history search ${q}`;
+      return `Not searched: chats (agent sessions). Include them: agentkb search --query ${q} --include-chats · today's chats by exact words: agent-history search ${q}${bookmarks}`;
     case "include-chats":
-      return `Chats come from the nightly index built ${built}; for chats since then: agent-history search ${q}`;
+      return `Chats come from the nightly index built ${built}; for chats since then: agent-history search ${q}${bookmarks}`;
     case "transcript-sessions":
       return `Searched chats only (nightly index built ${built}). Documents: agentkb search --query ${q} · today's chats by exact words: agent-history search ${q}`;
   }
@@ -274,7 +278,12 @@ export function shapeDocumentSearchResult(
   result: DocumentSearchResult,
   content: "bounded" | "full" | "metadata",
   includeChats: boolean,
-  options: { k?: number; dedup?: boolean; minScore?: number | undefined } = {},
+  options: {
+    k?: number;
+    dedup?: boolean;
+    minScore?: number | undefined;
+    includeBookmarks?: boolean;
+  } = {},
 ): CliDocumentSearchResult {
   const k = options.k ?? result.k;
   const notes: string[] = [];
@@ -308,6 +317,7 @@ export function shapeDocumentSearchResult(
       includeChats ? "include-chats" : "documents",
       result.query,
       result.generation_id,
+      options.includeBookmarks ?? false,
     ),
   };
 }
@@ -356,7 +366,7 @@ const FILTER_OPTIONS: Record<`--${SearchFilterName}`, SearchFilterName> = {
   "--type": "type",
   "--collection": "collection",
 };
-const FILTER_COLLECTIONS = ["wiki", "wiki:source", "chats"];
+const FILTER_COLLECTIONS = ["wiki", "wiki:source", "chats", "bookmarks"];
 
 function isoDay(name: string, value: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -505,6 +515,7 @@ export async function runCli(
           "--k": "value",
           "--transcript-sessions": "boolean",
           "--include-chats": "boolean",
+          "--include-bookmarks": "boolean",
           "--full-content": "boolean",
           "--metadata-only": "boolean",
           "--no-dedup": "boolean",
@@ -522,9 +533,15 @@ export async function runCli(
         }
         const transcriptSessions = args.includes("--transcript-sessions");
         const includeChats = args.includes("--include-chats");
+        const includeBookmarks = args.includes("--include-bookmarks");
         if (transcriptSessions && includeChats) {
           throw usageError(
             "--include-chats cannot be combined with --transcript-sessions",
+          );
+        }
+        if (transcriptSessions && includeBookmarks) {
+          throw usageError(
+            "--include-bookmarks cannot be combined with --transcript-sessions",
           );
         }
         const request = validateUsage(() =>
@@ -554,18 +571,16 @@ export async function runCli(
         const roots = await dependencies.resolveRoots();
         client = clientFactory(roots);
         if (!transcriptSessions) {
-          const result = await client.searchDocuments(
-            request.query,
-            fetchK,
-            includeChats,
-          );
+          const result = includeBookmarks
+            ? await client.searchDocuments(request.query, fetchK, includeChats, true)
+            : await client.searchDocuments(request.query, fetchK, includeChats);
           writeJson(
             output,
             shapeDocumentSearchResult(
               result,
               metadataOnly ? "metadata" : fullContent ? "full" : "bounded",
               includeChats,
-              { k: request.k, dedup, minScore },
+              { k: request.k, dedup, minScore, includeBookmarks },
             ),
           );
           return;

@@ -126,9 +126,15 @@ class GenerationSearch:
 
     @modal.method()
     def search_documents(
-        self, query: str, k: int, include_chats: bool = False
+        self,
+        query: str,
+        k: int,
+        include_chats: bool = False,
+        include_bookmarks: bool = False,
     ) -> dict[str, Any]:
-        return self.runtime.search_documents(query, k, include_chats)
+        return self.runtime.search_documents(
+            query, k, include_chats, include_bookmarks
+        )
 
     @modal.exit()
     def exit(self) -> None:
@@ -209,10 +215,11 @@ def search_current(
 
 @app.function(image=router_image, volumes=volume_mount, timeout=900)
 def search_documents_current(
-    query: str, k: int, include_chats: bool = False
+    query: str, k: int, include_chats: bool = False, include_bookmarks: bool = False
 ) -> dict[str, Any]:
     volume.reload()
     generation_id = resolve_current(VOLUME_ROOT)
-    return GenerationSearch(generation_id=generation_id).search_documents.remote(
-        query, k, include_chats
-    )
+    method = GenerationSearch(generation_id=generation_id).search_documents
+    if include_bookmarks:
+        return method.remote(query, k, include_chats, True)
+    return method.remote(query, k, include_chats)

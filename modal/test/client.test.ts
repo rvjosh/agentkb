@@ -277,3 +277,55 @@ test("generation erasure methods validate and route only private SDK calls", asy
   ]);
   expect(client.findSession("unsupported" as "codex", "session-1")).rejects.toThrow();
 });
+
+test("bookmark hits come back only when asked for, opened from the checkout", async () => {
+  const calls: unknown[][] = [];
+  const bookmarkHit = {
+    collection: "bookmarks",
+    file: "bookmarked-tab-bulk/pages/bar/clip.md",
+    path: "bookmarked-tab-bulk/pages/bar/clip.md",
+    filename: "clip.md",
+    relative_path: "bookmarked-tab-bulk/pages/bar/clip.md",
+    line: 1,
+    score: 1,
+  };
+  const modal = {
+    functions: {
+      fromName: async () => ({
+        remote: async (args: unknown[]) => {
+          calls.push(args);
+          const withBookmarks = args[3] === true;
+          return {
+            schema: 1,
+            generation_id: ID,
+            query: "test",
+            k: 3,
+            collections: withBookmarks
+              ? ["wiki", "wiki:source", "bookmarks"]
+              : ["wiki", "wiki:source"],
+            words_terms: ["test"],
+            by_words: [],
+            by_meaning: [bookmarkHit],
+          };
+        },
+      }),
+    },
+    close: () => {},
+  } as unknown as ModalClient;
+  const client = new ModalAgentKbClient(modal, {
+    wikiRoot: "/wiki",
+    chatsReadableRoot: "/chats/readable",
+    externalRoots: { "bookmarked-tab-bulk/": "/home/me/bookmarked-tab-bulk" },
+  });
+
+  const result = await client.searchDocuments("test", 3, false, true);
+  expect(result.collections).toEqual(["wiki", "wiki:source", "bookmarks"]);
+  expect(result.by_meaning[0]!.path).toBe(
+    "/home/me/bookmarked-tab-bulk/pages/bar/clip.md",
+  );
+  // A bookmark in a default answer is a contract breach, not a result.
+  await expect(client.searchDocuments("test", 3, false)).rejects.toThrow(
+    /by_meaning\[0\]\.collection/,
+  );
+  expect(calls).toEqual([["test", 3, false, true], ["test", 3, false]]);
+});
