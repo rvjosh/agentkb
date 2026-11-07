@@ -795,7 +795,16 @@ def test_git_source_include_publishes_only_the_chosen_folders(tmp_path, monkeypa
                 ".claude/skills/x/SKILL.md": False,
             },
         ),
-        "muse-notes": (None, {"anywhere/note.md": True, "README.md": True}),
+        "muse-notes": (
+            None,
+            {
+                "anywhere/note.md": True,
+                "README.md": True,
+                # git-history-md output never publishes, include list or not.
+                "git-history/README.md": False,
+                "git-history/2026-11/2026-11-07.md": False,
+            },
+        ),
     }
     plan = _notes_plan(tmp_path, externalise=False)
     template = plan["sources"][0]

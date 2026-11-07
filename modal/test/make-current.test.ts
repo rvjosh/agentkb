@@ -574,13 +574,13 @@ test("registry publishes every git-backed repo, limiting only the code repos", a
   }
 });
 
-async function eodCloseRunWith(files: string[]) {
-  const checkout = join(await mkdtemp(join(tmpdir(), "agentkb-include-")), "eod-close");
+async function eodCloseRunWith(files: string[], sourceId = "eod-close") {
+  const checkout = join(await mkdtemp(join(tmpdir(), "agentkb-include-")), sourceId);
   for (const file of files) {
     await mkdir(join(checkout, file, ".."), { recursive: true });
     await writeFile(join(checkout, file), "# note\n");
   }
-  const state = dependencies({ config: { source_paths: { "eod-close": checkout } } });
+  const state = dependencies({ config: { source_paths: { [sourceId]: checkout } } });
   const fixtureScan = state.deps.scan;
   state.deps.scan = (roots, options) =>
     roots[0] === checkout
@@ -605,6 +605,16 @@ test("an include list counts only included markdown toward the source receipt", 
   const receipt = result.receipt.sources.find((s) => s.source_id === "eod-close");
   expect(receipt!.state).toBe("fresh");
   expect(receipt!.source_file_count).toBe(2);
+});
+
+test("git-history/ never counts toward a receipt, even without an include list", async () => {
+  const result = await eodCloseRunWith(
+    ["notes/a.md", "git-history/README.md", "git-history/2026-11/2026-11-07.md"],
+    "muse-notes",
+  );
+  expect(result.exitCode).toBe(0);
+  const receipt = result.receipt.sources.find((s) => s.source_id === "muse-notes");
+  expect(receipt!.source_file_count).toBe(1);
 });
 
 test("an include list that matches nothing fails like an empty checkout", async () => {

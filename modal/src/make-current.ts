@@ -84,6 +84,11 @@ export const GIT_BACKED_SOURCES: readonly GitBackedSource[] = [
   { sourceId: "tools-ts", repo: "rvjosh/tools-ts", include: ["docs", "tools.md"] },
 ];
 
+// Folders no source publishes, whatever its include list says. `git-history/`
+// is the per-day git log that `git-history-md` (tools-ts) writes into each
+// repo for agents to read on GitHub; in search it would only be noise.
+export const ALWAYS_EXCLUDED = ["git-history"] as const;
+
 // An include entry names a repo-relative file, or a folder and everything
 // under it. The Python exporter's `_included` must agree, or the freshness
 // count and the published files drift apart.
@@ -91,6 +96,9 @@ function pathIsIncluded(
   relativePath: string,
   include: readonly string[] | undefined,
 ): boolean {
+  if (ALWAYS_EXCLUDED.some((entry) => relativePath === entry || relativePath.startsWith(`${entry}/`))) {
+    return false;
+  }
   return (
     include === undefined ||
     include.some((entry) => relativePath === entry || relativePath.startsWith(`${entry}/`))

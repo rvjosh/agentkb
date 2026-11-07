@@ -149,12 +149,23 @@ def _records_for_entry(
         yield record
 
 
+# Folders no source publishes, whatever its include list says. Must match
+# ``ALWAYS_EXCLUDED`` in ``modal/src/make-current.ts``. ``git-history/`` is the
+# per-day git log that ``git-history-md`` (tools-ts) writes into each repo.
+ALWAYS_EXCLUDED = ("git-history",)
+
+
 def _included(relative_file: str, include: list[str] | None) -> bool:
     """An include entry names a file, or a folder and everything under it.
 
     Must agree with ``pathIsIncluded`` in ``modal/src/make-current.ts``, which
     counts the same files for the source's freshness receipt.
     """
+    if any(
+        relative_file == entry or relative_file.startswith(f"{entry}/")
+        for entry in ALWAYS_EXCLUDED
+    ):
+        return False
     return include is None or any(
         relative_file == entry or relative_file.startswith(f"{entry}/")
         for entry in include
